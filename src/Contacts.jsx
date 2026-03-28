@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from './logic/supabase'
-import { fetchContacts, updateContact } from './logic/sheets'
+import { fetchContacts, updateContact, fetchHeaders, guessMapping } from './logic/sheets'
+import ColumnMapper from './ColumnMapper'
 
-export default function Contacts({ sheetUrl, session }) {
+export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone }) {
   const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -16,13 +17,29 @@ export default function Contacts({ sheetUrl, session }) {
   const [responseFilter, setResponseFilter] = useState(null)
   const [statusFilter, setStatusFilter] = useState(null)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [sheetDropOpen, setSheetDropOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [remapping, setRemapping] = useState(false)
+  const [remapHeaders, setRemapHeaders] = useState([])
+  const [remapMapping, setRemapMapping] = useState({})
+  const [remapSaving, setRemapSaving] = useState(false)
+
+  const sheetDropRef = useRef(null)
+  const settingsRef = useRef(null)
 
   const userName = session.user.user_metadata?.full_name || session.user.email
+  const columnMapping = activeSheet.column_mapping
 
   useEffect(() => {
+    setLoading(true)
+    setContacts([])
+    setSelected(null)
+    setEditing(false)
+    setEditData(null)
+
     const load = async () => {
       const accessToken = session.provider_token
-      const data = await fetchContacts(sheetUrl, accessToken)
+      const data = await fetchContacts(activeSheet.sheet_url, activeSheet.tab_name, accessToken, columnMapping)
       setContacts(data)
       setLoading(false)
     }
@@ -31,19 +48,25 @@ export default function Contacts({ sheetUrl, session }) {
     const handleResize = () => setIsMobile(window.innerWidth < 768)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
+  }, [activeSheet.id])
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (sheetDropRef.current && !sheetDropRef.current.contains(e.target)) setSheetDropOpen(false)
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
   }, [])
 
   const filtered = contacts.filter(c => {
     const matchSearch =
-      c.full_name.toLowerCase().includes(search.toLowerCase()) ||
-      c.organization.toLowerCase().includes(search.toLowerCase()) ||
-      c.location.toLowerCase().includes(search.toLowerCase())
-    const matchResponse = responseFilter
-      ? (c.response || '').toUpperCase() === responseFilter
-      : true
-    const matchStatus = statusFilter
-      ? (c.status || '').toUpperCase() === statusFilter
-      : true
+      (c.full_name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (c.organization || '').toLowerCase().includes(search.toLowerCase()) ||
+      (c.location || '').toLowerCase().includes(search.toLowerCase())
+    const matchResponse = responseFilter ? (c.response || '').toUpperCase() === responseFilter : true
+    const matchStatus = statusFilter ? (c.status || '').toUpperCase() === statusFilter : true
     return matchSearch && matchResponse && matchStatus
   })
 
@@ -94,7 +117,7 @@ export default function Contacts({ sheetUrl, session }) {
   const handleSave = async () => {
     setSaving(true)
     const accessToken = session.provider_token
-    const success = await updateContact(sheetUrl, accessToken, editData)
+    const success = await updateContact(activeSheet.sheet_url, activeSheet.tab_name, accessToken, editData, columnMapping)
     if (success) {
       const updatedContacts = contacts.map(c =>
         c.rowIndex === editData.rowIndex ? {
@@ -114,22 +137,53 @@ export default function Contacts({ sheetUrl, session }) {
     setSaving(false)
   }
 
+  // Remap flow
+  const handleStartRemap = async () => {
+    setSettingsOpen(false)
+    const accessToken = session.provider_token
+    const fetched = await fetchHeaders(activeSheet.sheet_url, activeSheet.tab_name, accessToken)
+    const guessed = guessMapping(fetched)
+    // Merge guessed with existing mapping — prefer existing
+    const merged = { ...guessed, ...activeSheet.column_mapping }
+    setRemapHeaders(fetched)
+    setRemapMapping(merged)
+    setRemapping(true)
+  }
+
+  const handleRemapConfirm = async () => {
+    setRemapSaving(true)
+    const { data, error } = await supabase
+      .from('user_sheets')
+      .update({ column_mapping: remapMapping })
+      .eq('id', activeSheet.id)
+      .select()
+      .single()
+
+    if (!error && data) {
+      onRemapDone(data)
+      setRemapping(false)
+    } else {
+      alert('Could not save mapping. Try again.')
+    }
+    setRemapSaving(false)
+  }
+
   const field = (label, key, multiline = false) => (
     <div style={{ marginBottom: '16px' }}>
       <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
       {multiline ? (
         <textarea
-          value={editData[key]}
+          value={editData[key] || ''}
           onChange={e => setEditData({ ...editData, [key]: e.target.value })}
           rows={5}
-          style={{ width: '100%', padding: '10px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', color: '#333' }}
+          style={{ width: '100%', padding: '10px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', color: '#333', boxSizing: 'border-box' }}
         />
       ) : (
         <input
           type="text"
-          value={editData[key]}
+          value={editData[key] || ''}
           onChange={e => setEditData({ ...editData, [key]: e.target.value })}
-          style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', color: '#333' }}
+          style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', color: '#333', boxSizing: 'border-box' }}
         />
       )}
     </div>
@@ -214,8 +268,22 @@ export default function Contacts({ sheetUrl, session }) {
     </div>
   )
 
+  // Remap screen
+  if (remapping) {
+    return (
+      <ColumnMapper
+        headers={remapHeaders}
+        mapping={remapMapping}
+        onChange={(field, value) => setRemapMapping(prev => ({ ...prev, [field]: value }))}
+        onConfirm={handleRemapConfirm}
+        onBack={() => setRemapping(false)}
+        saving={remapSaving}
+      />
+    )
+  }
+
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontSize: '16px', color: '#666' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontSize: '16px', color: '#666', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
       Loading contacts...
     </div>
   )
@@ -225,24 +293,120 @@ export default function Contacts({ sheetUrl, session }) {
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '0 16px', height: '56px',
       background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)',
-      borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 100, width: '100%'
+      borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 100, width: '100%',
+      boxSizing: 'border-box'
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+      {/* Left: Logo + Sheet Switcher */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <span style={{ fontSize: '18px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
+
+        {/* Sheet dropdown */}
+        <div ref={sheetDropRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => { setSheetDropOpen(p => !p); setSettingsOpen(false) }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              padding: '5px 10px', fontSize: '13px', fontWeight: '600',
+              border: '1px solid #ddd', borderRadius: '8px',
+              background: sheetDropOpen ? '#ede9fe' : '#fff',
+              color: sheetDropOpen ? '#4f46e5' : '#333',
+              cursor: 'pointer', outline: 'none'
+            }}
+          >
+            {activeSheet.sheet_name}
+            <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
+              <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+
+          {sheetDropOpen && (
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 6px)', left: 0,
+              background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+              border: '1px solid #e8e8e8', minWidth: '200px', overflow: 'hidden', zIndex: 200
+            }}>
+              {sheets.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => { onSwitchSheet(s); setSheetDropOpen(false) }}
+                  style={{
+                    width: '100%', textAlign: 'left', padding: '10px 14px',
+                    fontSize: '13px', fontWeight: s.id === activeSheet.id ? '700' : '500',
+                    background: s.id === activeSheet.id ? '#f5f3ff' : '#fff',
+                    color: s.id === activeSheet.id ? '#4f46e5' : '#333',
+                    border: 'none', cursor: 'pointer', display: 'block',
+                    borderBottom: '1px solid #f5f5f5'
+                  }}
+                >
+                  {s.sheet_name}
+                  {s.id === activeSheet.id && (
+                    <span style={{ fontSize: '11px', color: '#a5b4fc', marginLeft: '8px', fontWeight: '600' }}>Active</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <span style={{ fontSize: '11px', background: '#ede9fe', padding: '3px 10px', borderRadius: '20px', color: '#4f46e5', fontWeight: '600' }}>
           {contacts.length.toLocaleString()}
         </span>
       </div>
+
+      {/* Right: Username + Settings */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#4f46e5', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700' }}>
+        <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#4f46e5', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
           {userName.charAt(0).toUpperCase()}
         </div>
-        <span style={{ fontSize: '13px', color: '#333', fontWeight: '500', maxWidth: isMobile ? '80px' : '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: '13px', color: '#333', fontWeight: '500', maxWidth: isMobile ? '70px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {isMobile ? userName.split(' ')[0] : userName}
         </span>
-        <button onClick={() => supabase.auth.signOut()} style={{ padding: '5px 10px', fontSize: '12px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '6px', background: '#fff', color: '#666' }}>
-          Sign Out
-        </button>
+
+        {/* Settings dropdown */}
+        <div ref={settingsRef} style={{ position: 'relative' }}>
+          <button
+            onClick={() => { setSettingsOpen(p => !p); setSheetDropOpen(false) }}
+            style={{
+              padding: '5px 10px', fontSize: '12px', fontWeight: '600',
+              border: '1px solid #ddd', borderRadius: '6px',
+              background: settingsOpen ? '#ede9fe' : '#fff',
+              color: settingsOpen ? '#4f46e5' : '#666',
+              cursor: 'pointer', outline: 'none'
+            }}
+          >
+            Settings
+          </button>
+
+          {settingsOpen && (
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+              background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+              border: '1px solid #e8e8e8', minWidth: '180px', overflow: 'hidden', zIndex: 200
+            }}>
+              {[
+                { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
+                { label: 'Re-map Columns', action: handleStartRemap },
+                { label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
+              ].map(({ label, action, danger }) => (
+                <button
+                  key={label}
+                  onClick={action}
+                  style={{
+                    width: '100%', textAlign: 'left', padding: '11px 16px',
+                    fontSize: '13px', fontWeight: '500',
+                    background: '#fff', color: danger ? '#dc2626' : '#333',
+                    border: 'none', borderBottom: '1px solid #f5f5f5',
+                    cursor: 'pointer', display: 'block'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = danger ? '#fef2f2' : '#f9f8ff'}
+                  onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -307,7 +471,6 @@ export default function Contacts({ sheetUrl, session }) {
       `}</style>
 
       <div style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', minHeight: '100vh', background: 'linear-gradient(135deg, #ece9f7 0%, #e8f0fe 100%)', width: '100%', overflowX: 'hidden' }}>
-
         {nav}
 
         {isMobile ? (
@@ -457,7 +620,6 @@ export default function Contacts({ sheetUrl, session }) {
           </div>
         )}
 
-        {/* TOAST */}
         {saveMsg && (
           <div style={{
             position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
@@ -469,7 +631,6 @@ export default function Contacts({ sheetUrl, session }) {
             Saved to Google Sheet
           </div>
         )}
-
       </div>
     </>
   )
