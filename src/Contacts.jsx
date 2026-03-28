@@ -10,7 +10,7 @@ export default function Contacts({ sheetUrl, session }) {
   const [editing, setEditing] = useState(false)
   const [editData, setEditData] = useState(null)
   const [saving, setSaving] = useState(false)
-  const [panelWidth, setPanelWidth] = useState(360)
+  const [panelWidth, setPanelWidth] = useState(480)
   const [dragging, setDragging] = useState(false)
   const [responseFilter, setResponseFilter] = useState(null)
   const [statusFilter, setStatusFilter] = useState(null)
@@ -104,9 +104,10 @@ export default function Contacts({ sheetUrl, session }) {
       setContacts(updatedContacts)
       setEditing(false)
       setEditData(null)
-      alert('✅ Saved to Google Sheet!')
+      setSelected(null)
+      alert('Saved to Google Sheet!')
     } else {
-      alert('❌ Something went wrong. Try again.')
+      alert('Something went wrong. Try again.')
     }
     setSaving(false)
   }
@@ -171,7 +172,7 @@ export default function Contacts({ sheetUrl, session }) {
             </div>
           </div>
           <button onClick={handleEdit} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>
-            ✏️ Edit Contact
+            Edit Contact
           </button>
         </>
       ) : (
@@ -190,7 +191,7 @@ export default function Contacts({ sheetUrl, session }) {
               Cancel
             </button>
             <button onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
-              {saving ? 'Saving...' : '💾 Save'}
+              {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
         </>
@@ -207,7 +208,7 @@ export default function Contacts({ sheetUrl, session }) {
         <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111', margin: 0 }}>{contact.full_name || '—'}</h2>
         <p style={{ fontSize: '13px', color: '#888', margin: '2px 0 0' }}>{contact.organization || '—'}</p>
       </div>
-      <button onClick={() => { setSelected(null); setEditing(false); setEditData(null) }} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#aaa' }}>✕</button>
+      <button onClick={() => { setSelected(null); setEditing(false); setEditData(null) }} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#aaa' }}>x</button>
     </div>
   )
 
@@ -234,9 +235,9 @@ export default function Contacts({ sheetUrl, session }) {
         <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#4f46e5', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700' }}>
           {userName.charAt(0).toUpperCase()}
         </div>
-<span style={{ fontSize: '13px', color: '#333', fontWeight: '500', maxWidth: isMobile ? '80px' : '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-  {isMobile ? userName.split(' ')[0] : userName}
-</span>
+        <span style={{ fontSize: '13px', color: '#333', fontWeight: '500', maxWidth: isMobile ? '80px' : '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {isMobile ? userName.split(' ')[0] : userName}
+        </span>
         <button onClick={() => supabase.auth.signOut()} style={{ padding: '5px 10px', fontSize: '12px', cursor: 'pointer', border: '1px solid #ddd', borderRadius: '6px', background: '#fff', color: '#666' }}>
           Sign Out
         </button>
@@ -248,7 +249,7 @@ export default function Contacts({ sheetUrl, session }) {
     <div style={{ padding: '16px 16px 8px' }}>
       <input
         type="text"
-        placeholder="🔍   Search by name, organization or location..."
+        placeholder="Search by name, organization or location..."
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         style={{ width: '100%', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', marginBottom: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', boxSizing: 'border-box' }}
@@ -271,7 +272,7 @@ export default function Contacts({ sheetUrl, session }) {
         </select>
         {(responseFilter || statusFilter || search) && (
           <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }} style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-            ✕
+            Clear
           </button>
         )}
       </div>
@@ -308,11 +309,8 @@ export default function Contacts({ sheetUrl, session }) {
         {nav}
 
         {isMobile ? (
-          /* ── MOBILE LAYOUT ── */
           <div>
             {searchAndFilters}
-
-            {/* CARDS */}
             <div style={{ padding: '0 12px 100px' }}>
               {filtered.map((c, i) => (
                 <div
@@ -326,7 +324,9 @@ export default function Contacts({ sheetUrl, session }) {
                       {(c.full_name || '?').charAt(0).toUpperCase()}
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      <p style={{ fontSize: '15px', fontWeight: '600', color: '#111', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.full_name || '—'}</p>
+                      <p style={{ fontSize: '15px', fontWeight: '600', color: '#111', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {c.first_name || c.full_name || '—'}
+                      </p>
                       <p style={{ fontSize: '13px', color: '#888', margin: '2px 0 0' }}>{c.organization || '—'}</p>
                     </div>
                   </div>
@@ -340,7 +340,6 @@ export default function Contacts({ sheetUrl, session }) {
               ))}
             </div>
 
-            {/* BOTTOM SHEET */}
             {selected !== null && filtered[selected] && (
               <div style={{ position: 'fixed', inset: 0, zIndex: 200 }}>
                 <div onClick={() => { setSelected(null); setEditing(false); setEditData(null) }} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} />
@@ -354,15 +353,13 @@ export default function Contacts({ sheetUrl, session }) {
           </div>
 
         ) : (
-          /* ── DESKTOP LAYOUT ── */
           <div style={{ display: 'flex', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
             <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '20px 24px' }}>
 
-              {/* SEARCH + FILTERS */}
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <input
                   type="text"
-                  placeholder="🔍   Search by name, organization or location..."
+                  placeholder="Search by name, organization or location..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
@@ -384,7 +381,7 @@ export default function Contacts({ sheetUrl, session }) {
                 </select>
                 {(responseFilter || statusFilter || search) && (
                   <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }} style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>
-                    ✕ Clear
+                    Clear
                   </button>
                 )}
               </div>
@@ -398,7 +395,6 @@ export default function Contacts({ sheetUrl, session }) {
                 </p>
               )}
 
-              {/* TABLE */}
               <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: '500px' }}>
                   <colgroup>
@@ -443,7 +439,6 @@ export default function Contacts({ sheetUrl, session }) {
               </div>
             </div>
 
-            {/* DRAG HANDLE + SIDE PANEL */}
             {selected !== null && filtered[selected] && (
               <>
                 <div
