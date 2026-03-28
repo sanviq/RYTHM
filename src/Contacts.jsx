@@ -368,13 +368,13 @@ export default function Contacts({ sheetUrl, session }) {
                   style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
                 />
                 <select value={responseFilter || ''} onChange={e => setResponseFilter(e.target.value || null)} style={{ ...dropdownStyle(responseFilter), flex: 'none' }}>
-                  <option value=''>🎯 Response</option>
-                  <option value='HOT'>🔥 Hot</option>
-                  <option value='WARM'>☀️ Warm</option>
-                  <option value='COLD'>❄️ Cold</option>
+                  <option value=''>Response</option>
+                  <option value='HOT'>Hot</option>
+                  <option value='WARM'>Warm</option>
+                  <option value='COLD'>Cold</option>
                 </select>
                 <select value={statusFilter || ''} onChange={e => setStatusFilter(e.target.value || null)} style={{ ...dropdownStyle(statusFilter), flex: 'none' }}>
-                  <option value=''>📋 Status</option>
+                  <option value=''>Status</option>
                   <option value='NEW'>New</option>
                   <option value='INFO DONE'>Info Done</option>
                   <option value='INVITE SENT'>Invite Sent</option>
