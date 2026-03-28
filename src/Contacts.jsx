@@ -29,6 +29,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   const userName = session.user.user_metadata?.full_name || session.user.email
   const columnMapping = activeSheet.column_mapping
+  const extraFieldDefs = (columnMapping.extra || []) // [{label, colIndex}]
 
   useEffect(() => {
     setLoading(true)
@@ -50,7 +51,6 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     return () => window.removeEventListener('resize', handleResize)
   }, [activeSheet.id])
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e) => {
       if (sheetDropRef.current && !sheetDropRef.current.contains(e.target)) setSheetDropOpen(false)
@@ -90,16 +90,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setDragging(true)
     const startX = e.clientX
     const startWidth = panelWidth
-    const onMove = (e) => {
-      const delta = startX - e.clientX
-      const newWidth = Math.min(Math.max(startWidth + delta, 260), 700)
-      setPanelWidth(newWidth)
-    }
-    const onUp = () => {
-      setDragging(false)
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
+    const onMove = (e) => setPanelWidth(Math.min(Math.max(startWidth + (startX - e.clientX), 260), 700))
+    const onUp = () => { setDragging(false); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
@@ -109,10 +101,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setEditing(true)
   }
 
-  const handleCancel = () => {
-    setEditing(false)
-    setEditData(null)
-  }
+  const handleCancel = () => { setEditing(false); setEditData(null) }
 
   const handleSave = async () => {
     setSaving(true)
@@ -137,55 +126,50 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setSaving(false)
   }
 
-  // Remap flow
   const handleStartRemap = async () => {
     setSettingsOpen(false)
     const accessToken = session.provider_token
     const fetched = await fetchHeaders(activeSheet.sheet_url, activeSheet.tab_name, accessToken)
-    const guessed = guessMapping(fetched)
-    // Merge guessed with existing mapping — prefer existing
-    const merged = { ...guessed, ...activeSheet.column_mapping }
     setRemapHeaders(fetched)
-    setRemapMapping(merged)
+    setRemapMapping({ ...activeSheet.column_mapping })
     setRemapping(true)
   }
 
-  const handleRemapConfirm = async () => {
+  const handleRemapConfirm = async (finalMapping) => {
     setRemapSaving(true)
     const { data, error } = await supabase
       .from('user_sheets')
-      .update({ column_mapping: remapMapping })
+      .update({ column_mapping: finalMapping })
       .eq('id', activeSheet.id)
       .select()
       .single()
-
-    if (!error && data) {
-      onRemapDone(data)
-      setRemapping(false)
-    } else {
-      alert('Could not save mapping. Try again.')
-    }
+    if (!error && data) { onRemapDone(data); setRemapping(false) }
+    else alert('Could not save mapping. Try again.')
     setRemapSaving(false)
   }
 
+  // Field renderer for edit mode
   const field = (label, key, multiline = false) => (
     <div style={{ marginBottom: '16px' }}>
       <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
       {multiline ? (
-        <textarea
-          value={editData[key] || ''}
-          onChange={e => setEditData({ ...editData, [key]: e.target.value })}
-          rows={5}
-          style={{ width: '100%', padding: '10px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', color: '#333', boxSizing: 'border-box' }}
-        />
+        <textarea value={editData[key] || ''} onChange={e => setEditData({ ...editData, [key]: e.target.value })} rows={4}
+          style={{ width: '100%', padding: '10px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', color: '#333', boxSizing: 'border-box' }} />
       ) : (
-        <input
-          type="text"
-          value={editData[key] || ''}
-          onChange={e => setEditData({ ...editData, [key]: e.target.value })}
-          style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', color: '#333', boxSizing: 'border-box' }}
-        />
+        <input type="text" value={editData[key] || ''} onChange={e => setEditData({ ...editData, [key]: e.target.value })}
+          style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', color: '#333', boxSizing: 'border-box' }} />
       )}
+    </div>
+  )
+
+  const extraField = (label) => (
+    <div key={label} style={{ marginBottom: '16px' }}>
+      <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
+      <input type="text"
+        value={(editData.extra && editData.extra[label]) || ''}
+        onChange={e => setEditData({ ...editData, extra: { ...editData.extra, [label]: e.target.value } })}
+        style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', color: '#333', boxSizing: 'border-box' }}
+      />
     </div>
   )
 
@@ -194,16 +178,29 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     border: `1.5px solid ${active ? '#4f46e5' : '#ddd'}`,
     borderRadius: '10px', outline: 'none',
     background: active ? '#ede9fe' : '#fff',
-    cursor: 'pointer',
-    color: active ? '#4f46e5' : '#888',
-    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-    flex: 1
+    cursor: 'pointer', color: active ? '#4f46e5' : '#888',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.06)', flex: 1
   })
+
+  const panelHeader = (contact) => (
+    <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div>
+        <div style={{ width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: '800', marginBottom: '10px', ...avatarColor(contact.status) }}>
+          {(contact.full_name || '?').charAt(0).toUpperCase()}
+        </div>
+        <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111', margin: 0 }}>{contact.full_name || '—'}</h2>
+        <p style={{ fontSize: '13px', color: '#888', margin: '2px 0 0' }}>{contact.organization || '—'}</p>
+      </div>
+      <button onClick={() => { setSelected(null); setEditing(false); setEditData(null) }}
+        style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#aaa' }}>x</button>
+    </div>
+  )
 
   const panelContent = (contact) => (
     <div style={{ padding: '16px 20px' }}>
       {!editing ? (
         <>
+          {/* Standard fields */}
           {[
             { label: 'Status', value: contact.status, badge: true },
             { label: 'Response', value: contact.response, badge: true },
@@ -213,20 +210,34 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             <div key={label} style={{ marginBottom: '16px' }}>
               <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 4px' }}>{label}</p>
               {badge ? (
-                <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', display: 'inline-block', ...statusStyle(value) }}>
-                  {value || '—'}
-                </span>
+                <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', display: 'inline-block', ...statusStyle(value) }}>{value || '—'}</span>
               ) : (
                 <p style={{ fontSize: '14px', color: '#333', margin: 0 }}>{value || '—'}</p>
               )}
             </div>
           ))}
+
+          {/* Extra fields (view) */}
+          {extraFieldDefs.length > 0 && (
+            <>
+              <div style={{ borderTop: '1px solid #f0f0f0', margin: '4px 0 16px' }} />
+              {extraFieldDefs.map(({ label }) => (
+                <div key={label} style={{ marginBottom: '14px' }}>
+                  <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 4px' }}>{label}</p>
+                  <p style={{ fontSize: '14px', color: '#333', margin: 0 }}>{(contact.extra && contact.extra[label]) || '—'}</p>
+                </div>
+              ))}
+            </>
+          )}
+
+          {/* Notes */}
           <div style={{ marginBottom: '20px' }}>
             <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
             <div style={{ background: '#f9f8ff', borderRadius: '10px', padding: '14px', fontSize: '13px', color: '#444', lineHeight: '1.6', whiteSpace: 'pre-wrap', border: '1px solid #ede9fe' }}>
               {contact.notes || 'No notes for this contact.'}
             </div>
           </div>
+
           <button onClick={handleEdit} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>
             Edit Contact
           </button>
@@ -241,7 +252,17 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           {field('Response', 'response')}
           {field('Mobile', 'mobile_no')}
           {field('Location', 'location')}
+
+          {/* Extra fields (edit) */}
+          {extraFieldDefs.length > 0 && (
+            <>
+              <div style={{ borderTop: '1px solid #f0f0f0', margin: '4px 0 16px' }} />
+              {extraFieldDefs.map(({ label }) => extraField(label))}
+            </>
+          )}
+
           {field('Notes', 'notes', true)}
+
           <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
             <button onClick={handleCancel} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#f5f5f5', color: '#555', border: '1px solid #ddd', borderRadius: '10px', cursor: 'pointer' }}>
               Cancel
@@ -255,26 +276,11 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     </div>
   )
 
-  const panelHeader = (contact) => (
-    <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-      <div>
-        <div style={{ width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: '800', marginBottom: '10px', ...avatarColor(contact.status) }}>
-          {(contact.full_name || '?').charAt(0).toUpperCase()}
-        </div>
-        <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111', margin: 0 }}>{contact.full_name || '—'}</h2>
-        <p style={{ fontSize: '13px', color: '#888', margin: '2px 0 0' }}>{contact.organization || '—'}</p>
-      </div>
-      <button onClick={() => { setSelected(null); setEditing(false); setEditData(null) }} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#aaa' }}>x</button>
-    </div>
-  )
-
-  // Remap screen
   if (remapping) {
     return (
       <ColumnMapper
         headers={remapHeaders}
-        mapping={remapMapping}
-        onChange={(field, value) => setRemapMapping(prev => ({ ...prev, [field]: value }))}
+        initialMapping={remapMapping}
         onConfirm={handleRemapConfirm}
         onBack={() => setRemapping(false)}
         saving={remapSaving}
@@ -289,30 +295,15 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   )
 
   const nav = (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0 16px', height: '56px',
-      background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)',
-      borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 100, width: '100%',
-      boxSizing: 'border-box'
-    }}>
-      {/* Left: Logo + Sheet Switcher */}
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '56px', background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 100, width: '100%', boxSizing: 'border-box' }}>
+
+      {/* Left: Logo + Sheet Switcher + Count */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <span style={{ fontSize: '18px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
 
-        {/* Sheet dropdown */}
         <div ref={sheetDropRef} style={{ position: 'relative' }}>
-          <button
-            onClick={() => { setSheetDropOpen(p => !p); setSettingsOpen(false) }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '5px 10px', fontSize: '13px', fontWeight: '600',
-              border: '1px solid #ddd', borderRadius: '8px',
-              background: sheetDropOpen ? '#ede9fe' : '#fff',
-              color: sheetDropOpen ? '#4f46e5' : '#333',
-              cursor: 'pointer', outline: 'none'
-            }}
-          >
+          <button onClick={() => { setSheetDropOpen(p => !p); setSettingsOpen(false) }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', fontSize: '13px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '8px', background: sheetDropOpen ? '#ede9fe' : '#fff', color: sheetDropOpen ? '#4f46e5' : '#333', cursor: 'pointer', outline: 'none' }}>
             {activeSheet.sheet_name}
             <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
               <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
@@ -320,28 +311,12 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           </button>
 
           {sheetDropOpen && (
-            <div style={{
-              position: 'absolute', top: 'calc(100% + 6px)', left: 0,
-              background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-              border: '1px solid #e8e8e8', minWidth: '200px', overflow: 'hidden', zIndex: 200
-            }}>
+            <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '200px', overflow: 'hidden', zIndex: 200 }}>
               {sheets.map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => { onSwitchSheet(s); setSheetDropOpen(false) }}
-                  style={{
-                    width: '100%', textAlign: 'left', padding: '10px 14px',
-                    fontSize: '13px', fontWeight: s.id === activeSheet.id ? '700' : '500',
-                    background: s.id === activeSheet.id ? '#f5f3ff' : '#fff',
-                    color: s.id === activeSheet.id ? '#4f46e5' : '#333',
-                    border: 'none', cursor: 'pointer', display: 'block',
-                    borderBottom: '1px solid #f5f5f5'
-                  }}
-                >
+                <button key={s.id} onClick={() => { onSwitchSheet(s); setSheetDropOpen(false) }}
+                  style={{ width: '100%', textAlign: 'left', padding: '10px 14px', fontSize: '13px', fontWeight: s.id === activeSheet.id ? '700' : '500', background: s.id === activeSheet.id ? '#f5f3ff' : '#fff', color: s.id === activeSheet.id ? '#4f46e5' : '#333', border: 'none', cursor: 'pointer', display: 'block', borderBottom: '1px solid #f5f5f5' }}>
                   {s.sheet_name}
-                  {s.id === activeSheet.id && (
-                    <span style={{ fontSize: '11px', color: '#a5b4fc', marginLeft: '8px', fontWeight: '600' }}>Active</span>
-                  )}
+                  {s.id === activeSheet.id && <span style={{ fontSize: '11px', color: '#a5b4fc', marginLeft: '8px' }}>Active</span>}
                 </button>
               ))}
             </div>
@@ -362,45 +337,23 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           {isMobile ? userName.split(' ')[0] : userName}
         </span>
 
-        {/* Settings dropdown */}
         <div ref={settingsRef} style={{ position: 'relative' }}>
-          <button
-            onClick={() => { setSettingsOpen(p => !p); setSheetDropOpen(false) }}
-            style={{
-              padding: '5px 10px', fontSize: '12px', fontWeight: '600',
-              border: '1px solid #ddd', borderRadius: '6px',
-              background: settingsOpen ? '#ede9fe' : '#fff',
-              color: settingsOpen ? '#4f46e5' : '#666',
-              cursor: 'pointer', outline: 'none'
-            }}
-          >
+          <button onClick={() => { setSettingsOpen(p => !p); setSheetDropOpen(false) }}
+            style={{ padding: '5px 10px', fontSize: '12px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '6px', background: settingsOpen ? '#ede9fe' : '#fff', color: settingsOpen ? '#4f46e5' : '#666', cursor: 'pointer', outline: 'none' }}>
             Settings
           </button>
 
           {settingsOpen && (
-            <div style={{
-              position: 'absolute', top: 'calc(100% + 6px)', right: 0,
-              background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-              border: '1px solid #e8e8e8', minWidth: '180px', overflow: 'hidden', zIndex: 200
-            }}>
+            <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '180px', overflow: 'hidden', zIndex: 200 }}>
               {[
                 { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
                 { label: 'Re-map Columns', action: handleStartRemap },
                 { label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
               ].map(({ label, action, danger }) => (
-                <button
-                  key={label}
-                  onClick={action}
-                  style={{
-                    width: '100%', textAlign: 'left', padding: '11px 16px',
-                    fontSize: '13px', fontWeight: '500',
-                    background: '#fff', color: danger ? '#dc2626' : '#333',
-                    border: 'none', borderBottom: '1px solid #f5f5f5',
-                    cursor: 'pointer', display: 'block'
-                  }}
+                <button key={label} onClick={action}
+                  style={{ width: '100%', textAlign: 'left', padding: '11px 16px', fontSize: '13px', fontWeight: '500', background: '#fff', color: danger ? '#dc2626' : '#333', border: 'none', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', display: 'block' }}
                   onMouseEnter={e => e.currentTarget.style.background = danger ? '#fef2f2' : '#f9f8ff'}
-                  onMouseLeave={e => e.currentTarget.style.background = '#fff'}
-                >
+                  onMouseLeave={e => e.currentTarget.style.background = '#fff'}>
                   {label}
                 </button>
               ))}
@@ -413,13 +366,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   const searchAndFilters = (
     <div style={{ padding: '16px 16px 8px' }}>
-      <input
-        type="text"
-        placeholder="Search by name, organization or location..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ width: '100%', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', marginBottom: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', boxSizing: 'border-box' }}
-      />
+      <input type="text" placeholder="Search by name, organization or location..." value={search} onChange={(e) => setSearch(e.target.value)}
+        style={{ width: '100%', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', marginBottom: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', boxSizing: 'border-box' }} />
       <div style={{ display: 'flex', gap: '8px' }}>
         <select value={responseFilter || ''} onChange={e => setResponseFilter(e.target.value || null)} style={dropdownStyle(responseFilter)}>
           <option value=''>Response</option>
@@ -437,7 +385,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           <option value='TO BE INVITED'>To Be Invited</option>
         </select>
         {(responseFilter || statusFilter || search) && (
-          <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }} style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }}
+            style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', whiteSpace: 'nowrap' }}>
             Clear
           </button>
         )}
@@ -460,14 +409,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         .contact-row.active { background: #ede9fe !important; }
         .contact-card:hover { border-color: #a5b4fc !important; }
         * { box-sizing: border-box; }
-        @keyframes slideIn {
-          from { transform: translateX(100%); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
-        @keyframes slideUp {
-          from { transform: translateY(100%); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
-        }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
       `}</style>
 
       <div style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', minHeight: '100vh', background: 'linear-gradient(135deg, #ece9f7 0%, #e8f0fe 100%)', width: '100%', overflowX: 'hidden' }}>
@@ -478,20 +421,14 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             {searchAndFilters}
             <div style={{ padding: '0 12px 100px' }}>
               {filtered.map((c, i) => (
-                <div
-                  key={i}
-                  className="contact-card"
-                  onClick={() => { setSelected(i); setEditing(false); setEditData(null) }}
-                  style={{ background: '#fff', borderRadius: '14px', border: '1px solid #e8e8e8', padding: '14px 16px', marginBottom: '10px', cursor: 'pointer', transition: 'border-color 0.15s' }}
-                >
+                <div key={i} className="contact-card" onClick={() => { setSelected(i); setEditing(false); setEditData(null) }}
+                  style={{ background: '#fff', borderRadius: '14px', border: '1px solid #e8e8e8', padding: '14px 16px', marginBottom: '10px', cursor: 'pointer', transition: 'border-color 0.15s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', flexShrink: 0, ...avatarColor(c.status) }}>
                       {(c.full_name || '?').charAt(0).toUpperCase()}
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      <p style={{ fontSize: '15px', fontWeight: '600', color: '#111', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {c.first_name || c.full_name || '—'}
-                      </p>
+                      <p style={{ fontSize: '15px', fontWeight: '600', color: '#111', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.first_name || c.full_name || '—'}</p>
                       <p style={{ fontSize: '13px', color: '#888', margin: '2px 0 0' }}>{c.organization || '—'}</p>
                     </div>
                   </div>
@@ -521,13 +458,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           <div style={{ display: 'flex', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
             <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '20px 24px' }}>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
-                <input
-                  type="text"
-                  placeholder="Search by name, organization or location..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}
-                />
+                <input type="text" placeholder="Search by name, organization or location..." value={search} onChange={(e) => setSearch(e.target.value)}
+                  style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }} />
                 <select value={responseFilter || ''} onChange={e => setResponseFilter(e.target.value || null)} style={{ ...dropdownStyle(responseFilter), flex: 'none' }}>
                   <option value=''>Response</option>
                   <option value='HOT'>Hot</option>
@@ -544,7 +476,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                   <option value='TO BE INVITED'>To Be Invited</option>
                 </select>
                 {(responseFilter || statusFilter || search) && (
-                  <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }} style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>
+                  <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }}
+                    style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>
                     Clear
                   </button>
                 )}
@@ -562,33 +495,24 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
               <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: '500px' }}>
                   <colgroup>
-                    <col style={{ width: '22%' }} />
-                    <col style={{ width: '16%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '16%' }} />
-                    <col style={{ width: '14%' }} />
+                    <col style={{ width: '22%' }} /><col style={{ width: '16%' }} />
+                    <col style={{ width: '12%' }} /><col style={{ width: '12%' }} />
+                    <col style={{ width: '16%' }} /><col style={{ width: '14%' }} />
                     <col style={{ width: '8%' }} />
                   </colgroup>
                   <thead>
                     <tr style={{ background: '#faf9ff', borderBottom: '2px solid #ede9fe' }}>
-                      <th style={th}>Name</th>
-                      <th style={th}>Organization</th>
-                      <th style={th}>Status</th>
-                      <th style={th}>Response</th>
-                      <th style={th}>Mobile</th>
-                      <th style={th}>Location</th>
+                      <th style={th}>Name</th><th style={th}>Organization</th>
+                      <th style={th}>Status</th><th style={th}>Response</th>
+                      <th style={th}>Mobile</th><th style={th}>Location</th>
                       <th style={{ ...th, textAlign: 'center' }}>Notes</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.map((c, i) => (
-                      <tr
-                        key={i}
-                        className={`contact-row${selected === i ? ' active' : ''}`}
+                      <tr key={i} className={`contact-row${selected === i ? ' active' : ''}`}
                         style={{ borderBottom: '1px solid #f5f5f5', cursor: 'pointer', background: 'transparent' }}
-                        onClick={() => { setSelected(selected === i ? null : i); setEditing(false); setEditData(null) }}
-                      >
+                        onClick={() => { setSelected(selected === i ? null : i); setEditing(false); setEditData(null) }}>
                         <td style={{ ...td, fontWeight: '600', color: '#4f46e5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: '#c7d2fe' }}>{c.full_name || '—'}</td>
                         <td style={{ ...td, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.organization || '—'}</td>
                         <td style={td}><span style={{ padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '700', display: 'inline-block', ...statusStyle(c.status) }}>{c.status || '—'}</span></td>
@@ -605,12 +529,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
             {selected !== null && filtered[selected] && (
               <>
-                <div
-                  onMouseDown={startDrag}
+                <div onMouseDown={startDrag}
                   style={{ width: '5px', cursor: 'col-resize', background: dragging ? '#4f46e5' : 'transparent', transition: 'background 0.2s', flexShrink: 0, zIndex: 10 }}
                   onMouseEnter={e => e.currentTarget.style.background = '#c7d2fe'}
-                  onMouseLeave={e => { if (!dragging) e.currentTarget.style.background = 'transparent' }}
-                />
+                  onMouseLeave={e => { if (!dragging) e.currentTarget.style.background = 'transparent' }} />
                 <div style={{ width: `${panelWidth}px`, minWidth: '260px', background: '#fff', borderLeft: '1px solid #e0e0e0', overflowY: 'auto', boxShadow: '-4px 0 20px rgba(79,70,229,0.08)', animation: 'slideIn 0.2s ease', flexShrink: 0 }}>
                   {panelHeader(filtered[selected])}
                   {panelContent(filtered[selected])}
@@ -621,13 +543,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         )}
 
         {saveMsg && (
-          <div style={{
-            position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-            background: '#166534', color: '#fff', padding: '12px 24px',
-            borderRadius: '10px', fontSize: '14px', fontWeight: '600',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 999,
-            animation: 'slideUp 0.2s ease'
-          }}>
+          <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: '#166534', color: '#fff', padding: '12px 24px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 999, animation: 'slideUp 0.2s ease' }}>
             Saved to Google Sheet
           </div>
         )}

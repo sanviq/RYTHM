@@ -3,8 +3,8 @@ import { supabase } from './logic/supabase'
 import { fetchHeaders, guessMapping } from './logic/sheets'
 import ColumnMapper from './ColumnMapper'
 
-export default function SheetSetup({ session, onSheetSaved }) {
-  const [step, setStep] = useState('form') // 'form' | 'mapping'
+export default function SheetSetup({ session, onSheetSaved, onCancel }) {
+  const [step, setStep] = useState('form')
   const [sheetUrl, setSheetUrl] = useState('')
   const [tabName, setTabName] = useState('')
   const [sheetName, setSheetName] = useState('')
@@ -15,7 +15,7 @@ export default function SheetSetup({ session, onSheetSaved }) {
 
   const handleNext = async () => {
     if (!sheetUrl.trim()) return setError('Please paste your Google Sheet URL.')
-    if (!tabName.trim()) return setError('Please enter the tab name (e.g. contacts).')
+    if (!tabName.trim()) return setError('Please enter the tab name.')
     if (!sheetName.trim()) return setError('Please enter a name for this sheet.')
     setError('')
     setLoading(true)
@@ -24,25 +24,19 @@ export default function SheetSetup({ session, onSheetSaved }) {
     const fetched = await fetchHeaders(sheetUrl.trim(), tabName.trim(), accessToken)
 
     if (!fetched || fetched.length === 0) {
-      setError('Could not read headers from that sheet. Check the URL and tab name and make sure the sheet is shared with your Google account.')
+      setError('Could not read headers. Check the URL and tab name and make sure the sheet is shared with your Google account.')
       setLoading(false)
       return
     }
 
-    const guessed = guessMapping(fetched)
     setHeaders(fetched)
-    setMapping(guessed)
+    setMapping(guessMapping(fetched))
     setStep('mapping')
     setLoading(false)
   }
 
-  const handleMappingChange = (field, value) => {
-    setMapping(prev => ({ ...prev, [field]: value }))
-  }
-
-  const handleConfirm = async () => {
+  const handleConfirm = async (finalMapping) => {
     setLoading(true)
-
     const { data, error: insertError } = await supabase
       .from('user_sheets')
       .insert({
@@ -50,7 +44,7 @@ export default function SheetSetup({ session, onSheetSaved }) {
         sheet_url: sheetUrl.trim(),
         tab_name: tabName.trim(),
         sheet_name: sheetName.trim(),
-        column_mapping: mapping,
+        column_mapping: finalMapping,
       })
       .select()
       .single()
@@ -60,7 +54,6 @@ export default function SheetSetup({ session, onSheetSaved }) {
       setLoading(false)
       return
     }
-
     onSheetSaved(data)
     setLoading(false)
   }
@@ -70,7 +63,6 @@ export default function SheetSetup({ session, onSheetSaved }) {
     border: '1px solid #ddd', borderRadius: '10px', outline: 'none',
     color: '#333', boxSizing: 'border-box', marginTop: '6px'
   }
-
   const labelStyle = {
     fontSize: '12px', fontWeight: '700', color: '#555',
     textTransform: 'uppercase', letterSpacing: '0.4px'
@@ -80,8 +72,7 @@ export default function SheetSetup({ session, onSheetSaved }) {
     return (
       <ColumnMapper
         headers={headers}
-        mapping={mapping}
-        onChange={handleMappingChange}
+        initialMapping={mapping}
         onConfirm={handleConfirm}
         onBack={() => setStep('form')}
         saving={loading}
@@ -103,7 +94,6 @@ export default function SheetSetup({ session, onSheetSaved }) {
         padding: '36px 40px', width: '100%', maxWidth: '480px'
       }}>
         <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
-
         <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111', margin: '20px 0 4px' }}>Connect a Google Sheet</h2>
         <p style={{ fontSize: '13px', color: '#888', margin: '0 0 28px' }}>
           Paste your sheet URL, enter the tab name, and give this sheet a label.
@@ -111,35 +101,15 @@ export default function SheetSetup({ session, onSheetSaved }) {
 
         <div style={{ marginBottom: '16px' }}>
           <label style={labelStyle}>Sheet Name (your label)</label>
-          <input
-            type="text"
-            placeholder='e.g. Main Contacts'
-            value={sheetName}
-            onChange={e => setSheetName(e.target.value)}
-            style={inputStyle}
-          />
+          <input type="text" placeholder='e.g. Main Contacts' value={sheetName} onChange={e => setSheetName(e.target.value)} style={inputStyle} />
         </div>
-
         <div style={{ marginBottom: '16px' }}>
           <label style={labelStyle}>Google Sheet URL</label>
-          <input
-            type="text"
-            placeholder="https://docs.google.com/spreadsheets/d/..."
-            value={sheetUrl}
-            onChange={e => setSheetUrl(e.target.value)}
-            style={inputStyle}
-          />
+          <input type="text" placeholder="https://docs.google.com/spreadsheets/d/..." value={sheetUrl} onChange={e => setSheetUrl(e.target.value)} style={inputStyle} />
         </div>
-
         <div style={{ marginBottom: '24px' }}>
           <label style={labelStyle}>Tab Name</label>
-          <input
-            type="text"
-            placeholder='e.g. contacts'
-            value={tabName}
-            onChange={e => setTabName(e.target.value)}
-            style={inputStyle}
-          />
+          <input type="text" placeholder='e.g. contacts' value={tabName} onChange={e => setTabName(e.target.value)} style={inputStyle} />
           <p style={{ fontSize: '11px', color: '#aaa', margin: '6px 0 0' }}>
             The exact name of the sheet tab at the bottom of your spreadsheet.
           </p>
@@ -151,18 +121,16 @@ export default function SheetSetup({ session, onSheetSaved }) {
           </p>
         )}
 
-        <button
-          onClick={handleNext}
-          disabled={loading}
-          style={{
-            width: '100%', padding: '12px', fontSize: '14px', fontWeight: '600',
-            background: '#4f46e5', color: '#fff', border: 'none',
-            borderRadius: '10px', cursor: loading ? 'not-allowed' : 'pointer',
-            opacity: loading ? 0.7 : 1
-          }}
-        >
-          {loading ? 'Reading sheet...' : 'Next: Map Columns'}
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {onCancel && (
+            <button onClick={onCancel} style={{ flex: 1, padding: '12px', fontSize: '14px', fontWeight: '600', background: '#f5f5f5', color: '#555', border: '1px solid #ddd', borderRadius: '10px', cursor: 'pointer' }}>
+              Back
+            </button>
+          )}
+          <button onClick={handleNext} disabled={loading} style={{ flex: 2, padding: '12px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
+            {loading ? 'Reading sheet...' : 'Next: Map Columns'}
+          </button>
+        </div>
       </div>
     </div>
   )
