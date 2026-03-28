@@ -10,6 +10,7 @@ export default function Contacts({ sheetUrl, session }) {
   const [editing, setEditing] = useState(false)
   const [editData, setEditData] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState(false)
   const [panelWidth, setPanelWidth] = useState(480)
   const [dragging, setDragging] = useState(false)
   const [responseFilter, setResponseFilter] = useState(null)
@@ -105,7 +106,8 @@ export default function Contacts({ sheetUrl, session }) {
       setEditing(false)
       setEditData(null)
       setSelected(null)
-      alert('Saved to Google Sheet!')
+      setSaveMsg(true)
+      setTimeout(() => setSaveMsg(false), 3000)
     } else {
       alert('Something went wrong. Try again.')
     }
@@ -355,7 +357,6 @@ export default function Contacts({ sheetUrl, session }) {
         ) : (
           <div style={{ display: 'flex', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
             <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '20px 24px' }}>
-
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <input
                   type="text"
@@ -455,6 +456,20 @@ export default function Contacts({ sheetUrl, session }) {
             )}
           </div>
         )}
+
+        {/* TOAST */}
+        {saveMsg && (
+          <div style={{
+            position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+            background: '#166534', color: '#fff', padding: '12px 24px',
+            borderRadius: '10px', fontSize: '14px', fontWeight: '600',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 999,
+            animation: 'slideUp 0.2s ease'
+          }}>
+            Saved to Google Sheet
+          </div>
+        )}
+
       </div>
     </>
   )
