@@ -1,8 +1,20 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from './logic/supabase'
 import Login from './Login'
 import SheetSetup from './SheetSetup'
 import Contacts from './Contacts'
+
+// Call this anywhere you need a fresh Google access token
+export async function getFreshToken() {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session?.provider_token) return session.provider_token
+
+  // Try refreshing the session
+  const { data: { session: refreshed } } = await supabase.auth.refreshSession()
+  if (refreshed?.provider_token) return refreshed.provider_token
+
+  return null
+}
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -18,11 +30,13 @@ export default function App() {
       else setLoading(false)
     })
 
-    supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       if (session) loadSheets(session)
       else { setLoading(false); setSheets([]); setActiveSheet(null) }
     })
+
+    return () => subscription.unsubscribe()
   }, [])
 
   const loadSheets = async (session) => {
@@ -34,7 +48,11 @@ export default function App() {
 
     if (data && data.length > 0) {
       setSheets(data)
-      setActiveSheet(data[0])
+      setActiveSheet(prev => {
+        // Keep active sheet if still valid, else use first
+        if (prev && data.find(s => s.id === prev.id)) return prev
+        return data[0]
+      })
     }
     setLoading(false)
   }
@@ -50,6 +68,12 @@ export default function App() {
     setActiveSheet(updatedSheet)
   }
 
+  // Cancel adding sheet — go back to existing active sheet
+  const handleCancelAddSheet = () => {
+    setAddingSheet(false)
+    // activeSheet is preserved in state, nothing to reset
+  }
+
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', fontSize: '15px', color: '#666' }}>
       Loading...
@@ -62,7 +86,7 @@ export default function App() {
     <SheetSetup
       session={session}
       onSheetSaved={handleSheetSaved}
-      onCancel={sheets.length > 0 ? () => setAddingSheet(false) : null}
+      onCancel={sheets.length > 0 ? handleCancelAddSheet : null}
     />
   )
 

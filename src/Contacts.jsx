@@ -1,11 +1,35 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from './logic/supabase'
-import { fetchContacts, updateContact, fetchHeaders, guessMapping } from './logic/sheets'
+import { fetchContacts, updateContact, fetchHeaders } from './logic/sheets'
+import { getFreshToken } from './App'
 import ColumnMapper from './ColumnMapper'
+
+// Cache helpers
+const CACHE_TTL = 1000 * 60 * 60 * 6 // 6 hours
+const cacheKey = (sheetId) => `rythm_contacts_${sheetId}`
+
+function loadFromCache(sheetId) {
+  try {
+    const raw = localStorage.getItem(cacheKey(sheetId))
+    if (!raw) return null
+    const { data, timestamp } = JSON.parse(raw)
+    if (Date.now() - timestamp > CACHE_TTL) { localStorage.removeItem(cacheKey(sheetId)); return null }
+    return data
+  } catch { return null }
+}
+
+function saveToCache(sheetId, data) {
+  try { localStorage.setItem(cacheKey(sheetId), JSON.stringify({ data, timestamp: Date.now() })) } catch {}
+}
+
+function clearCache(sheetId) {
+  try { localStorage.removeItem(cacheKey(sheetId)) } catch {}
+}
 
 export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone }) {
   const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [cacheHit, setCacheHit] = useState(false)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
   const [editing, setEditing] = useState(false)
@@ -23,33 +47,57 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const [remapHeaders, setRemapHeaders] = useState([])
   const [remapMapping, setRemapMapping] = useState({})
   const [remapSaving, setRemapSaving] = useState(false)
+  const [tokenError, setTokenError] = useState(false)
 
   const sheetDropRef = useRef(null)
   const settingsRef = useRef(null)
 
   const userName = session.user.user_metadata?.full_name || session.user.email
   const columnMapping = activeSheet.column_mapping
-  const extraFieldDefs = (columnMapping.extra || []) // [{label, colIndex}]
+  const extraFieldDefs = columnMapping.extra || []
 
   useEffect(() => {
-    setLoading(true)
-    setContacts([])
     setSelected(null)
     setEditing(false)
     setEditData(null)
+    setTokenError(false)
+    setSearch('')
+    setResponseFilter(null)
+    setStatusFilter(null)
 
-    const load = async () => {
-      const accessToken = session.provider_token
-      const data = await fetchContacts(activeSheet.sheet_url, activeSheet.tab_name, accessToken, columnMapping)
-      setContacts(data)
+    // Try cache first — show instantly
+    const cached = loadFromCache(activeSheet.id)
+    if (cached) {
+      setContacts(cached)
       setLoading(false)
+      setCacheHit(true)
+      return // Don't fetch — use cache
     }
-    load()
+
+    setCacheHit(false)
+    loadContacts()
 
     const handleResize = () => setIsMobile(window.innerWidth < 768)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [activeSheet.id])
+
+  const loadContacts = async () => {
+    setLoading(true)
+    const accessToken = await getFreshToken()
+    if (!accessToken) { setTokenError(true); setLoading(false); return }
+
+    const data = await fetchContacts(activeSheet.sheet_url, activeSheet.tab_name, accessToken, columnMapping)
+    setContacts(data)
+    saveToCache(activeSheet.id, data)
+    setCacheHit(false)
+    setLoading(false)
+  }
+
+  const handleRefresh = () => {
+    clearCache(activeSheet.id)
+    loadContacts()
+  }
 
   useEffect(() => {
     const handler = (e) => {
@@ -96,25 +144,27 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     window.addEventListener('mouseup', onUp)
   }
 
-  const handleEdit = () => {
-    setEditData({ ...filtered[selected] })
-    setEditing(true)
-  }
-
+  const handleEdit = () => { setEditData({ ...filtered[selected] }); setEditing(true) }
   const handleCancel = () => { setEditing(false); setEditData(null) }
 
   const handleSave = async () => {
     setSaving(true)
-    const accessToken = session.provider_token
+    const accessToken = await getFreshToken()
+    if (!accessToken) {
+      alert('Session expired. Please sign out and sign back in.')
+      setSaving(false)
+      return
+    }
     const success = await updateContact(activeSheet.sheet_url, activeSheet.tab_name, accessToken, editData, columnMapping)
     if (success) {
-      const updatedContacts = contacts.map(c =>
+      const updated = contacts.map(c =>
         c.rowIndex === editData.rowIndex ? {
           ...editData,
           full_name: [editData.first_name, editData.middle_name, editData.last_name].filter(Boolean).join(' ')
         } : c
       )
-      setContacts(updatedContacts)
+      setContacts(updated)
+      saveToCache(activeSheet.id, updated)
       setEditing(false)
       setEditData(null)
       setSelected(null)
@@ -128,7 +178,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   const handleStartRemap = async () => {
     setSettingsOpen(false)
-    const accessToken = session.provider_token
+    const accessToken = await getFreshToken()
+    if (!accessToken) { alert('Session expired. Please sign out and sign back in.'); return }
     const fetched = await fetchHeaders(activeSheet.sheet_url, activeSheet.tab_name, accessToken)
     setRemapHeaders(fetched)
     setRemapMapping({ ...activeSheet.column_mapping })
@@ -143,12 +194,16 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
       .eq('id', activeSheet.id)
       .select()
       .single()
-    if (!error && data) { onRemapDone(data); setRemapping(false) }
-    else alert('Could not save mapping. Try again.')
+    if (!error && data) {
+      clearCache(activeSheet.id)
+      onRemapDone(data)
+      setRemapping(false)
+    } else {
+      alert('Could not save mapping. Try again.')
+    }
     setRemapSaving(false)
   }
 
-  // Field renderer for edit mode
   const field = (label, key, multiline = false) => (
     <div style={{ marginBottom: '16px' }}>
       <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
@@ -200,7 +255,6 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     <div style={{ padding: '16px 20px' }}>
       {!editing ? (
         <>
-          {/* Standard fields */}
           {[
             { label: 'Status', value: contact.status, badge: true },
             { label: 'Response', value: contact.response, badge: true },
@@ -209,15 +263,12 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           ].map(({ label, value, badge }) => (
             <div key={label} style={{ marginBottom: '16px' }}>
               <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 4px' }}>{label}</p>
-              {badge ? (
-                <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', display: 'inline-block', ...statusStyle(value) }}>{value || '—'}</span>
-              ) : (
-                <p style={{ fontSize: '14px', color: '#333', margin: 0 }}>{value || '—'}</p>
-              )}
+              {badge
+                ? <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', display: 'inline-block', ...statusStyle(value) }}>{value || '—'}</span>
+                : <p style={{ fontSize: '14px', color: '#333', margin: 0 }}>{value || '—'}</p>}
             </div>
           ))}
 
-          {/* Extra fields (view) */}
           {extraFieldDefs.length > 0 && (
             <>
               <div style={{ borderTop: '1px solid #f0f0f0', margin: '4px 0 16px' }} />
@@ -230,7 +281,6 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             </>
           )}
 
-          {/* Notes */}
           <div style={{ marginBottom: '20px' }}>
             <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
             <div style={{ background: '#f9f8ff', borderRadius: '10px', padding: '14px', fontSize: '13px', color: '#444', lineHeight: '1.6', whiteSpace: 'pre-wrap', border: '1px solid #ede9fe' }}>
@@ -252,21 +302,15 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           {field('Response', 'response')}
           {field('Mobile', 'mobile_no')}
           {field('Location', 'location')}
-
-          {/* Extra fields (edit) */}
           {extraFieldDefs.length > 0 && (
             <>
               <div style={{ borderTop: '1px solid #f0f0f0', margin: '4px 0 16px' }} />
               {extraFieldDefs.map(({ label }) => extraField(label))}
             </>
           )}
-
           {field('Notes', 'notes', true)}
-
           <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-            <button onClick={handleCancel} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#f5f5f5', color: '#555', border: '1px solid #ddd', borderRadius: '10px', cursor: 'pointer' }}>
-              Cancel
-            </button>
+            <button onClick={handleCancel} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#f5f5f5', color: '#555', border: '1px solid #ddd', borderRadius: '10px', cursor: 'pointer' }}>Cancel</button>
             <button onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
               {saving ? 'Saving...' : 'Save'}
             </button>
@@ -294,10 +338,17 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     </div>
   )
 
+  if (tokenError) return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', gap: '16px' }}>
+      <p style={{ fontSize: '15px', color: '#666' }}>Your session expired. Please sign in again.</p>
+      <button onClick={() => supabase.auth.signOut()} style={{ padding: '10px 24px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>
+        Sign Out
+      </button>
+    </div>
+  )
+
   const nav = (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '56px', background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 100, width: '100%', boxSizing: 'border-box' }}>
-
-      {/* Left: Logo + Sheet Switcher + Count */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <span style={{ fontSize: '18px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
 
@@ -306,10 +357,9 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', fontSize: '13px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '8px', background: sheetDropOpen ? '#ede9fe' : '#fff', color: sheetDropOpen ? '#4f46e5' : '#333', cursor: 'pointer', outline: 'none' }}>
             {activeSheet.sheet_name}
             <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
-              <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-
           {sheetDropOpen && (
             <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '200px', overflow: 'hidden', zIndex: 200 }}>
               {sheets.map(s => (
@@ -326,9 +376,15 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         <span style={{ fontSize: '11px', background: '#ede9fe', padding: '3px 10px', borderRadius: '20px', color: '#4f46e5', fontWeight: '600' }}>
           {contacts.length.toLocaleString()}
         </span>
+
+        {/* Refresh button — forces re-fetch from sheet */}
+        <button onClick={handleRefresh}
+          title="Refresh from Google Sheet"
+          style={{ fontSize: '12px', fontWeight: '600', color: cacheHit ? '#4f46e5' : '#aaa', background: 'none', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}>
+          {cacheHit ? 'Cached' : 'Refresh'}
+        </button>
       </div>
 
-      {/* Right: Username + Settings */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#4f46e5', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
           {userName.charAt(0).toUpperCase()}
@@ -342,7 +398,6 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             style={{ padding: '5px 10px', fontSize: '12px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '6px', background: settingsOpen ? '#ede9fe' : '#fff', color: settingsOpen ? '#4f46e5' : '#666', cursor: 'pointer', outline: 'none' }}>
             Settings
           </button>
-
           {settingsOpen && (
             <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '180px', overflow: 'hidden', zIndex: 200 }}>
               {[
