@@ -105,7 +105,6 @@ const [cacheHit, setCacheHit] = useState(null)
       return // Don't fetch — use cache
     }
 
-    setCacheHit(false)
     loadContacts()
 
     const handleResize = () => setIsMobile(window.innerWidth < 768)
