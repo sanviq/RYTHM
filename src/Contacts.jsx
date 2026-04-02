@@ -19,17 +19,46 @@ function loadFromCache(sheetId) {
 }
 
 function saveToCache(sheetId, data) {
-  try { localStorage.setItem(cacheKey(sheetId), JSON.stringify({ data, timestamp: Date.now() })) } catch {}
+  try {
+    const trimmed = data.map(c => ({
+      ...c,
+      notes: c.notes ? c.notes.slice(0, 500) : '',
+    }))
+    localStorage.setItem(cacheKey(sheetId), JSON.stringify({ data: trimmed, timestamp: Date.now() }))
+  } catch (e) {
+    console.warn('Cache write failed:', e)
+  }
+}
+
+function getCacheSize() {
+  try {
+    let total = 0
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('rythm_')) total += (localStorage.getItem(key) || '').length
+    }
+    return total
+  } catch { return 0 }
+}
+
+function pruneOldCaches(activeSheetId) {
+  try {
+    if (getCacheSize() > 20 * 1024 * 1024) {
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith('rythm_') && key !== cacheKey(activeSheetId)) {
+          localStorage.removeItem(key)
+        }
+      }
+    }
+  } catch {}
 }
 
 function clearCache(sheetId) {
   try { localStorage.removeItem(cacheKey(sheetId)) } catch {}
 }
 
-export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone }) {
-  const [contacts, setContacts] = useState([])
+export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone, onSheetDeleted }) {  const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [cacheHit, setCacheHit] = useState(false)
+const [cacheHit, setCacheHit] = useState(null)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
   const [editing, setEditing] = useState(false)
@@ -48,6 +77,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const [remapMapping, setRemapMapping] = useState({})
   const [remapSaving, setRemapSaving] = useState(false)
   const [tokenError, setTokenError] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const sheetDropRef = useRef(null)
   const settingsRef = useRef(null)
@@ -64,13 +94,14 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setSearch('')
     setResponseFilter(null)
     setStatusFilter(null)
+    setCacheHit(null)
 
     // Try cache first — show instantly
     const cached = loadFromCache(activeSheet.id)
     if (cached) {
       setContacts(cached)
       setLoading(false)
-      setCacheHit(true)
+      setCacheHit('cache')
       return // Don't fetch — use cache
     }
 
@@ -83,6 +114,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   }, [activeSheet.id])
 
   const loadContacts = async () => {
+    pruneOldCaches(activeSheet.id)
     setLoading(true)
     const accessToken = await getFreshToken()
     if (!accessToken) { setTokenError(true); setLoading(false); return }
@@ -90,7 +122,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     const data = await fetchContacts(activeSheet.sheet_url, activeSheet.tab_name, accessToken, columnMapping)
     setContacts(data)
     saveToCache(activeSheet.id, data)
-    setCacheHit(false)
+    setCacheHit('live')
     setLoading(false)
   }
 
@@ -203,6 +235,19 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     }
     setRemapSaving(false)
   }
+
+  const handleDeleteSheet = async () => {
+  if (!window.confirm(`Delete "${activeSheet.sheet_name}"? This removes it from Rythm only — your Google Sheet is untouched.`)) return
+  setDeleting(true)
+  const { error } = await supabase.from('user_sheets').delete().eq('id', activeSheet.id)
+  if (!error) {
+    clearCache(activeSheet.id)
+    onSheetDeleted(activeSheet.id)
+  } else {
+    alert('Could not delete sheet. Try again.')
+    setDeleting(false)
+  }
+}
 
   const field = (label, key, multiline = false) => (
     <div style={{ marginBottom: '16px' }}>
@@ -379,10 +424,12 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
         {/* Refresh button — forces re-fetch from sheet */}
         <button onClick={handleRefresh}
-          title="Refresh from Google Sheet"
-          style={{ fontSize: '12px', fontWeight: '600', color: cacheHit ? '#4f46e5' : '#aaa', background: 'none', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}>
-          {cacheHit ? 'Cached' : 'Refresh'}
-        </button>
+  title="Refresh from Google Sheet"
+  style={{ fontSize: '12px', fontWeight: '600',
+    color: cacheHit === 'cache' ? '#4f46e5' : cacheHit === 'live' ? '#16a34a' : '#aaa',
+    background: 'none', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}>
+  {cacheHit === 'cache' ? 'Cached' : cacheHit === 'live' ? 'Live · Refresh' : 'Refresh'}
+</button>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -402,8 +449,9 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '180px', overflow: 'hidden', zIndex: 200 }}>
               {[
                 { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
-                { label: 'Re-map Columns', action: handleStartRemap },
-                { label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
+{ label: 'Re-map Columns', action: handleStartRemap },
+{ label: deleting ? 'Deleting...' : 'Delete This Sheet', action: handleDeleteSheet, danger: true },
+{ label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
               ].map(({ label, action, danger }) => (
                 <button key={label} onClick={action}
                   style={{ width: '100%', textAlign: 'left', padding: '11px 16px', fontSize: '13px', fontWeight: '500', background: '#fff', color: danger ? '#dc2626' : '#333', border: 'none', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', display: 'block' }}

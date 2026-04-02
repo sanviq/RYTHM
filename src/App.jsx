@@ -63,6 +63,12 @@ export default function App() {
     setAddingSheet(false)
   }
 
+  const handleSheetDeleted = (deletedId) => {
+  const remaining = sheets.filter(s => s.id !== deletedId)
+  setSheets(remaining)
+  setActiveSheet(remaining.length > 0 ? remaining[0] : null)
+}
+
   const handleRemapDone = (updatedSheet) => {
     setSheets(prev => prev.map(s => s.id === updatedSheet.id ? updatedSheet : s))
     setActiveSheet(updatedSheet)
@@ -99,6 +105,6 @@ export default function App() {
       onSwitchSheet={setActiveSheet}
       onAddSheet={() => setAddingSheet(true)}
       onRemapDone={handleRemapDone}
-    />
+      onSheetDeleted={handleSheetDeleted}    />
   )
 }
