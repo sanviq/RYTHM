@@ -4,7 +4,6 @@ const FIXED_FIELDS = [
   { key: 'first_name',   label: 'First Name' },
   { key: 'middle_name',  label: 'Middle Name' },
   { key: 'last_name',    label: 'Last Name' },
-  { key: 'organization', label: 'Organization' },
   { key: 'status',       label: 'Status' },
   { key: 'response',     label: 'Response' },
   { key: 'notes',        label: 'Notes' },

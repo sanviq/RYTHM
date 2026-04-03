@@ -5,7 +5,7 @@ import { getFreshToken } from './App'
 import ColumnMapper from './ColumnMapper'
 
 // Cache helpers
-const CACHE_TTL = 1000 * 60 * 60 * 6 // 6 hours
+const CACHE_TTL = 1000 * 60 * 60 * 24// 6 hours
 const cacheKey = (sheetId) => `rythm_contacts_${sheetId}`
 
 function loadFromCache(sheetId) {
@@ -20,11 +20,7 @@ function loadFromCache(sheetId) {
 
 function saveToCache(sheetId, data) {
   try {
-    const trimmed = data.map(c => ({
-      ...c,
-      notes: c.notes ? c.notes.slice(0, 500) : '',
-    }))
-    localStorage.setItem(cacheKey(sheetId), JSON.stringify({ data: trimmed, timestamp: Date.now() }))
+    localStorage.setItem(cacheKey(sheetId), JSON.stringify({ data, timestamp: Date.now() }))
   } catch (e) {
     console.warn('Cache write failed:', e)
   }
@@ -56,6 +52,39 @@ function clearCache(sheetId) {
   try { localStorage.removeItem(cacheKey(sheetId)) } catch {}
 }
 
+const BADGE_KEYS = new Set(['status', 'response'])
+
+function buildColumns(columnMapping) {
+  const cols = []
+  const fixedFields = [
+    { key: 'organization', label: 'Organization' },
+    { key: 'status',       label: 'Status' },
+    { key: 'response',     label: 'Response' },
+    { key: 'mobile_no',    label: 'Mobile' },
+    { key: 'location',     label: 'Location' },
+  ]
+  fixedFields.forEach(({ key, label }) => {
+    const idx = columnMapping[key]
+    if (idx !== null && idx !== undefined) {
+      cols.push({ key, label, colIndex: idx, type: 'fixed' })
+    }
+  })
+  if (columnMapping.extra && Array.isArray(columnMapping.extra)) {
+    columnMapping.extra.forEach(({ label, colIndex }) => {
+      if (colIndex !== null && colIndex !== undefined && label) {
+        cols.push({ key: `extra_${label}`, label, colIndex, type: 'extra' })
+      }
+    })
+  }
+  cols.sort((a, b) => a.colIndex - b.colIndex)
+  return cols
+}
+
+function getCellValue(contact, col) {
+  if (col.type === 'fixed') return contact[col.key] || ''
+  return (contact.extra && contact.extra[col.label]) || ''
+}
+
 export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone, onSheetDeleted }) {  const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
 const [cacheHit, setCacheHit] = useState(null)
@@ -84,7 +113,8 @@ const [cacheHit, setCacheHit] = useState(null)
 
   const userName = session.user.user_metadata?.full_name || session.user.email
   const columnMapping = activeSheet.column_mapping
-  const extraFieldDefs = columnMapping.extra || []
+const extraFieldDefs = columnMapping.extra || []
+const dynCols = buildColumns(columnMapping)
 
   useEffect(() => {
     setSelected(null)
@@ -296,6 +326,51 @@ const [cacheHit, setCacheHit] = useState(null)
   )
 
   const panelContent = (contact) => (
+  <div style={{ padding: '16px 20px' }}>
+    {!editing ? (
+      <>
+        {dynCols.map(({ key, label, type }) => {
+          const value = type === 'fixed' ? contact[key] : (contact.extra && contact.extra[label])
+          const isBadge = BADGE_KEYS.has(key)
+          return (
+            <div key={key} style={{ marginBottom: '14px' }}>
+              <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 4px' }}>{label}</p>
+              {isBadge
+                ? <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', display: 'inline-block', ...statusStyle(value) }}>{value || '—'}</span>
+                : <p style={{ fontSize: '14px', color: '#333', margin: 0 }}>{value || '—'}</p>}
+            </div>
+          )
+        })}
+        <div style={{ marginBottom: '20px' }}>
+          <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
+          <div style={{ background: '#f9f8ff', borderRadius: '10px', padding: '14px', fontSize: '13px', color: '#444', lineHeight: '1.6', whiteSpace: 'pre-wrap', border: '1px solid #ede9fe' }}>
+            {contact.notes || 'No notes for this contact.'}
+          </div>
+        </div>
+        <button onClick={handleEdit} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>
+          Edit Contact
+        </button>
+      </>
+    ) : (
+      <>
+        {field('First Name', 'first_name')}
+        {field('Middle Name', 'middle_name')}
+        {field('Last Name', 'last_name')}
+        {dynCols.map(({ key, label, type }) => {
+          if (type === 'fixed') return field(label, key)
+          return extraField(label)
+        })}
+        {field('Notes', 'notes', true)}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+          <button onClick={handleCancel} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#f5f5f5', color: '#555', border: '1px solid #ddd', borderRadius: '10px', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </>
+    )}
+  </div>
+)
     <div style={{ padding: '16px 20px' }}>
       {!editing ? (
         <>
@@ -594,19 +669,14 @@ const [cacheHit, setCacheHit] = useState(null)
                 </p>
               )}
 
-              <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: '500px' }}>
-                  <colgroup>
-                    <col style={{ width: '22%' }} /><col style={{ width: '16%' }} />
-                    <col style={{ width: '12%' }} /><col style={{ width: '12%' }} />
-                    <col style={{ width: '16%' }} /><col style={{ width: '14%' }} />
-                    <col style={{ width: '8%' }} />
-                  </colgroup>
+              <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
                   <thead>
                     <tr style={{ background: '#faf9ff', borderBottom: '2px solid #ede9fe' }}>
-                      <th style={th}>Name</th><th style={th}>Organization</th>
-                      <th style={th}>Status</th><th style={th}>Response</th>
-                      <th style={th}>Mobile</th><th style={th}>Location</th>
+                      <th style={th}>Name</th>
+                      {dynCols.map(col => (
+                        <th key={col.key} style={th}>{col.label}</th>
+                      ))}
                       <th style={{ ...th, textAlign: 'center' }}>Notes</th>
                     </tr>
                   </thead>
@@ -615,13 +685,18 @@ const [cacheHit, setCacheHit] = useState(null)
                       <tr key={i} className={`contact-row${selected === i ? ' active' : ''}`}
                         style={{ borderBottom: '1px solid #f5f5f5', cursor: 'pointer', background: 'transparent' }}
                         onClick={() => { setSelected(selected === i ? null : i); setEditing(false); setEditData(null) }}>
-                        <td style={{ ...td, fontWeight: '600', color: '#4f46e5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: '#c7d2fe' }}>{c.full_name || '—'}</td>
-                        <td style={{ ...td, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.organization || '—'}</td>
-                        <td style={td}><span style={{ padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '700', display: 'inline-block', ...statusStyle(c.status) }}>{c.status || '—'}</span></td>
-                        <td style={td}><span style={{ padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: '700', display: 'inline-block', ...statusStyle(c.response) }}>{c.response || '—'}</span></td>
-                        <td style={{ ...td, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' }}>{c.mobile_no || '—'}</td>
-                        <td style={{ ...td, color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.location || '—'}</td>
-                        <td style={{ ...td, textAlign: 'center', fontSize: '16px' }}>{c.notes ? <span style={{ color: '#4f46e5' }}>●</span> : <span style={{ color: '#ddd' }}>○</span>}</td>
+                        <td style={{ ...td, fontWeight: '600', color: '#4f46e5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: '#c7d2fe', maxWidth: '140px' }}>{c.full_name || '—'}</td>
+                        {dynCols.map(col => {
+                          const val = getCellValue(c, col)
+                          return (
+                            <td key={col.key} style={{ ...td, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '110px' }}>
+                              {BADGE_KEYS.has(col.key) && val
+                                ? <span style={{ padding: '2px 7px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', display: 'inline-block', ...statusStyle(val) }}>{val}</span>
+                                : <span style={{ color: '#555', fontSize: '12px' }}>{val || '—'}</span>}
+                            </td>
+                          )
+                        })}
+                        <td style={{ ...td, textAlign: 'center', fontSize: '14px' }}>{c.notes ? <span style={{ color: '#4f46e5' }}>●</span> : <span style={{ color: '#ddd' }}>○</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -654,5 +729,5 @@ const [cacheHit, setCacheHit] = useState(null)
   )
 }
 
-const th = { padding: '12px 14px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-const td = { padding: '12px 14px', fontSize: '13px' }
+const th = { padding: '9px 10px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const td = { padding: '9px 10px', fontSize: '12px' }
