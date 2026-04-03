@@ -6,8 +6,12 @@ export default function Login() {
       provider: 'google',
       options: {
         scopes: 'https://www.googleapis.com/auth/spreadsheets',
-        redirectTo: window.location.origin
-      }
+        redirectTo: window.location.origin,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
     })
     if (error) console.error('Login error:', error.message)
   }

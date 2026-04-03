@@ -5,7 +5,7 @@ import { getFreshToken } from './App'
 import ColumnMapper from './ColumnMapper'
 
 // Cache helpers
-const CACHE_TTL = 1000 * 60 * 60 * 24// 6 hours
+const CACHE_TTL = 1000 * 60 * 60 * 24 // 24 hours
 const cacheKey = (sheetId) => `rythm_contacts_${sheetId}`
 
 function loadFromCache(sheetId) {
@@ -52,6 +52,18 @@ function clearCache(sheetId) {
   try { localStorage.removeItem(cacheKey(sheetId)) } catch {}
 }
 
+function normalizeColumnMapping(raw) {
+  if (raw == null) return {}
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return {}
+    }
+  }
+  return raw
+}
+
 const BADGE_KEYS = new Set(['status', 'response'])
 
 function buildColumns(columnMapping) {
@@ -85,9 +97,10 @@ function getCellValue(contact, col) {
   return (contact.extra && contact.extra[col.label]) || ''
 }
 
-export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone, onSheetDeleted }) {  const [contacts, setContacts] = useState([])
+export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone, onSheetDeleted }) {
+  const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
-const [cacheHit, setCacheHit] = useState(null)
+  const [cacheHit, setCacheHit] = useState(null)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
   const [editing, setEditing] = useState(false)
@@ -106,14 +119,15 @@ const [cacheHit, setCacheHit] = useState(null)
   const [remapMapping, setRemapMapping] = useState({})
   const [remapSaving, setRemapSaving] = useState(false)
   const [tokenError, setTokenError] = useState(false)
+  const [sheetError, setSheetError] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
   const sheetDropRef = useRef(null)
   const settingsRef = useRef(null)
 
   const userName = session.user.user_metadata?.full_name || session.user.email
-  const columnMapping = activeSheet.column_mapping
-const extraFieldDefs = columnMapping.extra || []
+  const columnMapping = normalizeColumnMapping(activeSheet.column_mapping)
+  const extraFieldDefs = columnMapping.extra || []
 const dynCols = buildColumns(columnMapping)
 
   useEffect(() => {
@@ -121,18 +135,19 @@ const dynCols = buildColumns(columnMapping)
     setEditing(false)
     setEditData(null)
     setTokenError(false)
+    setSheetError(null)
     setSearch('')
     setResponseFilter(null)
     setStatusFilter(null)
     setCacheHit(null)
 
-    // Try cache first — show instantly
+    // Instant path only when we have a non-empty cached list ([] was wrongly truthy and blocked refetch after errors)
     const cached = loadFromCache(activeSheet.id)
-    if (cached) {
+    if (cached && cached.length > 0) {
       setContacts(cached)
       setLoading(false)
       setCacheHit('cache')
-      return // Don't fetch — use cache
+      return
     }
 
     loadContacts()
@@ -142,22 +157,36 @@ const dynCols = buildColumns(columnMapping)
     return () => window.removeEventListener('resize', handleResize)
   }, [activeSheet.id])
 
-  const loadContacts = async () => {
-    pruneOldCaches(activeSheet.id)
+  const loadContacts = async (sheet = activeSheet) => {
+    const mapping = normalizeColumnMapping(sheet.column_mapping)
+    pruneOldCaches(sheet.id)
     setLoading(true)
-    const accessToken = await getFreshToken()
-    if (!accessToken) { setTokenError(true); setLoading(false); return }
-
-    const data = await fetchContacts(activeSheet.sheet_url, activeSheet.tab_name, accessToken, columnMapping)
-    setContacts(data)
-    saveToCache(activeSheet.id, data)
+    setSheetError(null)
     setCacheHit('live')
+    const accessToken = await getFreshToken()
+    if (!accessToken) {
+      setTokenError(true)
+      setLoading(false)
+      setCacheHit(null)
+      return
+    }
+
+    try {
+      const data = await fetchContacts(sheet.sheet_url, sheet.tab_name, accessToken, mapping)
+      setContacts(data)
+      saveToCache(sheet.id, data)
+      setCacheHit('live')
+    } catch (e) {
+      setSheetError(e?.message || 'Could not load your Google Sheet.')
+      setContacts([])
+      setCacheHit(null)
+    }
     setLoading(false)
   }
 
   const handleRefresh = () => {
     clearCache(activeSheet.id)
-    loadContacts()
+    loadContacts(activeSheet)
   }
 
   useEffect(() => {
@@ -243,7 +272,7 @@ const dynCols = buildColumns(columnMapping)
     if (!accessToken) { alert('Session expired. Please sign out and sign back in.'); return }
     const fetched = await fetchHeaders(activeSheet.sheet_url, activeSheet.tab_name, accessToken)
     setRemapHeaders(fetched)
-    setRemapMapping({ ...activeSheet.column_mapping })
+    setRemapMapping({ ...normalizeColumnMapping(activeSheet.column_mapping) })
     setRemapping(true)
   }
 
@@ -259,6 +288,7 @@ const dynCols = buildColumns(columnMapping)
       clearCache(activeSheet.id)
       onRemapDone(data)
       setRemapping(false)
+      loadContacts(data)
     } else {
       alert('Could not save mapping. Try again.')
     }
@@ -525,6 +555,18 @@ const dynCols = buildColumns(columnMapping)
 
       <div style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', minHeight: '100vh', background: 'linear-gradient(135deg, #ece9f7 0%, #e8f0fe 100%)', width: '100%', overflowX: 'hidden' }}>
         {nav}
+
+        {sheetError && (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', justifyContent: 'space-between', flexWrap: 'wrap', padding: '12px 16px', background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#991b1b', fontSize: '13px', lineHeight: '1.45' }}>
+            <span style={{ flex: '1 1 240px' }}>{sheetError}</span>
+            <button
+              type="button"
+              onClick={() => { clearCache(activeSheet.id); loadContacts(activeSheet) }}
+              style={{ flexShrink: 0, padding: '6px 14px', fontSize: '12px', fontWeight: '600', background: '#fff', color: '#991b1b', border: '1px solid #fca5a5', borderRadius: '8px', cursor: 'pointer' }}>
+              Retry
+            </button>
+          </div>
+        )}
 
         {isMobile ? (
           <div>

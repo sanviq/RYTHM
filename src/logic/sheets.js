@@ -3,14 +3,32 @@ export function extractSheetId(url) {
   return match ? match[1] : null
 }
 
+/** A1 range for a tab; quotes tab name when required (spaces, punctuation, leading digit, etc.). */
+export function formatTabRange(tabName, rangePart) {
+  if (!tabName || rangePart === undefined || rangePart === null) return ''
+  const name = String(tabName)
+  const needsQuote =
+    /^[0-9]/.test(name) || /[^A-Za-z0-9_]/.test(name)
+  const escaped = name.replace(/'/g, "''")
+  return needsQuote ? `'${escaped}'!${rangePart}` : `${name}!${rangePart}`
+}
+
+function valuesUrl(sheetId, tabName, rangePart) {
+  const range = encodeURIComponent(formatTabRange(tabName, rangePart))
+  return `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}`
+}
+
 export async function fetchHeaders(sheetUrl, tabName, accessToken) {
   const sheetId = extractSheetId(sheetUrl)
-  const range = `${tabName}!1:1`
-  const response = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  )
+  if (!sheetId) return []
+  const response = await fetch(valuesUrl(sheetId, tabName, '1:1'), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
   const data = await response.json()
+  if (!response.ok) {
+    console.warn('Sheets API (headers):', data.error?.message || response.status)
+    return []
+  }
   if (!data.values || !data.values[0]) return []
   return data.values[0]
 }
@@ -51,16 +69,26 @@ export function guessMapping(headers) {
 
 export async function fetchContacts(sheetUrl, tabName, accessToken, columnMapping) {
   const sheetId = extractSheetId(sheetUrl)
-  const range = `${tabName}!A:ZZ`
-  const response = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  )
+  if (!sheetId) {
+    throw new Error('Invalid Google Sheet URL — paste the full docs.google.com link.')
+  }
+  const response = await fetch(valuesUrl(sheetId, tabName, 'A:ZZ'), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
   const data = await response.json()
+  if (!response.ok) {
+    const msg = data.error?.message || `Sheets API error (${response.status})`
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(
+        `${msg} — Try signing out and signing in with Google again so Rythm can access your sheet.`
+      )
+    }
+    throw new Error(msg)
+  }
   if (!data.values) return []
 
   const rows = data.values.slice(1)
-  const m = columnMapping
+  const m = columnMapping || {}
   const get = (row, idx) => (idx !== null && idx !== undefined ? row[idx] || '' : '')
 
   return rows.map((row, index) => {
@@ -97,8 +125,9 @@ export async function fetchContacts(sheetUrl, tabName, accessToken, columnMappin
 
 export async function updateContact(sheetUrl, tabName, accessToken, contact, columnMapping) {
   const sheetId = extractSheetId(sheetUrl)
+  if (!sheetId) return false
   const row = contact.rowIndex
-  const m = columnMapping
+  const m = columnMapping || {}
 
   // Collect all indices used
   const fixedIndices = ['first_name','middle_name','last_name','organization','status','response','notes','mobile_no','location']
@@ -136,7 +165,8 @@ export async function updateContact(sheetUrl, tabName, accessToken, contact, col
     return s
   }
 
-  const range = `${tabName}!A${row}:${colLetter(maxCol)}${row}`
+  const rangeA1 = formatTabRange(tabName, `A${row}:${colLetter(maxCol)}${row}`)
+  const range = encodeURIComponent(rangeA1)
   const response = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueInputOption=USER_ENTERED`,
     {
