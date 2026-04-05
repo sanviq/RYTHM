@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from './logic/supabase'
 import { fetchContacts, updateContact, fetchHeaders } from './logic/sheets'
 import { getFreshToken } from './App'
@@ -52,6 +53,17 @@ function clearCache(sheetId) {
   try { localStorage.removeItem(cacheKey(sheetId)) } catch {}
 }
 
+/** True when DB row has a non-empty contacts_cache within TTL (cross-origin / device snapshot). */
+function isServerSnapshotFresh(activeSheet) {
+  if (!activeSheet?.contacts_cache || !activeSheet?.contacts_cache_at) return false
+  const rows = activeSheet.contacts_cache
+  if (!Array.isArray(rows) || rows.length === 0) return false
+  const ts = new Date(activeSheet.contacts_cache_at).getTime()
+  if (Number.isNaN(ts)) return false
+  if (Date.now() - ts > CACHE_TTL) return false
+  return true
+}
+
 function normalizeColumnMapping(raw) {
   if (raw == null) return {}
   if (typeof raw === 'string') {
@@ -68,6 +80,7 @@ const BADGE_KEYS = new Set(['status', 'response'])
 
 function buildColumns(columnMapping) {
   const cols = []
+  const ft = columnMapping.fieldTypes || {}
   const fixedFields = [
     { key: 'organization', label: 'Organization' },
     { key: 'status',       label: 'Status' },
@@ -78,13 +91,14 @@ function buildColumns(columnMapping) {
   fixedFields.forEach(({ key, label }) => {
     const idx = columnMapping[key]
     if (idx !== null && idx !== undefined) {
-      cols.push({ key, label, colIndex: idx, type: 'fixed' })
+      cols.push({ key, label, colIndex: idx, type: 'fixed', dataType: ft[key] === 'date' ? 'date' : 'text' })
     }
   })
   if (columnMapping.extra && Array.isArray(columnMapping.extra)) {
-    columnMapping.extra.forEach(({ label, colIndex }) => {
+    columnMapping.extra.forEach((e) => {
+      const { label, colIndex } = e
       if (colIndex !== null && colIndex !== undefined && label) {
-        cols.push({ key: `extra_${label}`, label, colIndex, type: 'extra' })
+        cols.push({ key: `extra_${label}`, label, colIndex, type: 'extra', dataType: e.dataType === 'date' ? 'date' : 'text' })
       }
     })
   }
@@ -97,7 +111,85 @@ function getCellValue(contact, col) {
   return (contact.extra && contact.extra[col.label]) || ''
 }
 
-export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone, onSheetDeleted }) {
+const EMPTY_SENTINEL = '__EMPTY__'
+const NOTES_FILTER_KEY = '__notes__'
+const NOTES_HAS = '__HAS_NOTES__'
+const NOTES_NO = '__NO_NOTES__'
+
+/** Parse sheet / ISO / common date strings and Excel serials for sorting */
+function parseSheetDate(raw) {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  const t = Date.parse(s)
+  if (!Number.isNaN(t)) return t
+  const m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/)
+  if (m) {
+    let a = +m[1], b = +m[2]
+    let y = +m[3]
+    if (String(m[3]).length === 2) y += y >= 70 ? 1900 : 2000
+    let day, month
+    if (a > 12) { day = a; month = b }
+    else if (b > 12) { month = a; day = b }
+    else { month = a; day = b }
+    const d = new Date(y, month - 1, day)
+    return Number.isNaN(d.getTime()) ? null : d.getTime()
+  }
+  const n = Number(s.replace(/,/g, ''))
+  if (!Number.isNaN(n) && n > 20000 && n < 1000000) {
+    const epoch = Date.UTC(1899, 11, 30)
+    const ms = epoch + Math.round(n) * 86400000
+    const d = new Date(ms)
+    if (!Number.isNaN(d.getTime())) return d.getTime()
+  }
+  return null
+}
+
+function uniqueValuesForColumn(contacts, col) {
+  const seen = new Set()
+  let hasBlank = false
+  for (const c of contacts) {
+    const v = String(getCellValue(c, col) ?? '').trim()
+    if (v === '') hasBlank = true
+    else seen.add(v)
+  }
+  const arr = [...seen].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  if (hasBlank) arr.unshift(EMPTY_SENTINEL)
+  return arr
+}
+
+function cellMatchesColumnFilter(c, col, selectedValues) {
+  if (!selectedValues?.length) return true
+  const raw = String(getCellValue(c, col) ?? '').trim()
+  if (raw === '') return selectedValues.includes(EMPTY_SENTINEL)
+  return selectedValues.includes(raw)
+}
+
+function FilterChevron({ open, active }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden style={{ flexShrink: 0, opacity: active ? 1 : 0.45, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+      <path d="M3 4.5L6 7.5L9 4.5" stroke={active ? '#4f46e5' : 'currentColor'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function DateSortButton({ active, dir, onCycle }) {
+  return (
+    <button
+      type="button"
+      title={active ? (dir === 'asc' ? 'Sorted oldest → newest. Click for newest first.' : 'Sorted newest → oldest. Click to clear sort.') : 'Sort by this date column'}
+      onClick={(e) => { e.stopPropagation(); onCycle() }}
+      style={{
+        flexShrink: 0, padding: '2px 5px', margin: 0, border: 'none',
+        background: active ? '#dbeafe' : 'transparent', cursor: 'pointer', borderRadius: '4px',
+        fontSize: '12px', fontWeight: '700', color: active ? '#1d4ed8' : '#94a3b8', lineHeight: 1,
+      }}>
+      {active ? (dir === 'asc' ? '↑' : '↓') : '⇅'}
+    </button>
+  )
+}
+
+export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, onAddSheet, onRemapDone, onSheetDeleted, onSheetCacheUpdate }) {
   const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
   const [cacheHit, setCacheHit] = useState(null)
@@ -109,8 +201,13 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const [saveMsg, setSaveMsg] = useState(false)
   const [panelWidth, setPanelWidth] = useState(480)
   const [dragging, setDragging] = useState(false)
-  const [responseFilter, setResponseFilter] = useState(null)
-  const [statusFilter, setStatusFilter] = useState(null)
+  /** col.key -> selected raw values (EMPTY_SENTINEL = blank cells) */
+  const [columnFilters, setColumnFilters] = useState({})
+  const [openFilterCol, setOpenFilterCol] = useState(null)
+  const [filterMenuPos, setFilterMenuPos] = useState(null)
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
+  /** { key: dynCol.key, dir: 'asc' | 'desc' } — only for columns with dataType === 'date' */
+  const [dateSort, setDateSort] = useState(null)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [sheetDropOpen, setSheetDropOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -128,7 +225,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const userName = session.user.user_metadata?.full_name || session.user.email
   const columnMapping = normalizeColumnMapping(activeSheet.column_mapping)
   const extraFieldDefs = columnMapping.extra || []
-const dynCols = buildColumns(columnMapping)
+  const dynCols = buildColumns(columnMapping)
 
   useEffect(() => {
     setSelected(null)
@@ -137,13 +234,17 @@ const dynCols = buildColumns(columnMapping)
     setTokenError(false)
     setSheetError(null)
     setSearch('')
-    setResponseFilter(null)
-    setStatusFilter(null)
+    setColumnFilters({})
+    setOpenFilterCol(null)
+    setFilterMenuPos(null)
+    setMobileFiltersOpen(false)
+    setDateSort(null)
     setCacheHit(null)
+    setLoading(true)
 
-    // Instant path only when we have a non-empty cached list ([] was wrongly truthy and blocked refetch after errors)
+    // 1) Same-origin browser cache (instant)
     const cached = loadFromCache(activeSheet.id)
-    if (cached && cached.length > 0) {
+    if (cached !== null) {
       setContacts(cached)
       setLoading(false)
       setCacheHit('cache')
@@ -162,7 +263,6 @@ const dynCols = buildColumns(columnMapping)
     pruneOldCaches(sheet.id)
     setLoading(true)
     setSheetError(null)
-    setCacheHit('live')
     const accessToken = await getFreshToken()
     if (!accessToken) {
       setTokenError(true)
@@ -185,6 +285,8 @@ const dynCols = buildColumns(columnMapping)
   }
 
   const handleRefresh = () => {
+    setCacheHit(null)
+setLoading(true)
     clearCache(activeSheet.id)
     loadContacts(activeSheet)
   }
@@ -193,20 +295,205 @@ const dynCols = buildColumns(columnMapping)
     const handler = (e) => {
       if (sheetDropRef.current && !sheetDropRef.current.contains(e.target)) setSheetDropOpen(false)
       if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false)
+      if (!e.target.closest?.('[data-col-filter]') && !e.target.closest?.('[data-col-filter-portal]')) {
+        setOpenFilterCol(null)
+        setFilterMenuPos(null)
+      }
+    }
+    const closeFilterOnScroll = () => {
+      setOpenFilterCol(null)
+      setFilterMenuPos(null)
     }
     document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    window.addEventListener('scroll', closeFilterOnScroll, true)
+    window.addEventListener('resize', closeFilterOnScroll)
+    return () => {
+      document.removeEventListener('mousedown', handler)
+      window.removeEventListener('scroll', closeFilterOnScroll, true)
+      window.removeEventListener('resize', closeFilterOnScroll)
+    }
   }, [])
 
-  const filtered = contacts.filter(c => {
-    const matchSearch =
-      (c.full_name || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.organization || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.location || '').toLowerCase().includes(search.toLowerCase())
-    const matchResponse = responseFilter ? (c.response || '').toUpperCase() === responseFilter : true
-    const matchStatus = statusFilter ? (c.status || '').toUpperCase() === statusFilter : true
-    return matchSearch && matchResponse && matchStatus
+  const uniqueOptionsByCol = useMemo(() => {
+    const out = {}
+    for (const col of dynCols) {
+      out[col.key] = uniqueValuesForColumn(contacts, col)
+    }
+    return out
+  }, [contacts, dynCols])
+
+  const toggleColumnFilterValue = (colKey, value) => {
+    setColumnFilters(prev => {
+      const cur = prev[colKey] || []
+      const has = cur.includes(value)
+      const next = has ? cur.filter(x => x !== value) : [...cur, value]
+      const copy = { ...prev }
+      if (next.length === 0) delete copy[colKey]
+      else copy[colKey] = next
+      return copy
+    })
+  }
+
+  const clearColumnFilter = (colKey) => {
+    setColumnFilters(prev => {
+      const copy = { ...prev }
+      delete copy[colKey]
+      return copy
+    })
+  }
+
+  const clearAllColumnFilters = () => setColumnFilters({})
+
+  const activeFilterCount = useMemo(
+    () => Object.values(columnFilters).reduce((n, arr) => n + (arr?.length || 0), 0),
+    [columnFilters]
+  )
+
+  const hasActiveColumnFilters = activeFilterCount > 0
+
+  const dateColumns = useMemo(() => dynCols.filter(c => c.dataType === 'date'), [dynCols])
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return contacts.filter(c => {
+      const matchSearch =
+        !q ||
+        (c.full_name || '').toLowerCase().includes(q) ||
+        (c.first_name || '').toLowerCase().includes(q) ||
+        (c.organization || '').toLowerCase().includes(q) ||
+        (c.location || '').toLowerCase().includes(q)
+      if (!matchSearch) return false
+      const nf = columnFilters[NOTES_FILTER_KEY]
+      if (nf?.length) {
+        const has = nf.includes(NOTES_HAS)
+        const no = nf.includes(NOTES_NO)
+        const rowHas = !!(c.notes && String(c.notes).trim())
+        const matchNotes = (has && rowHas) || (no && !rowHas)
+        if (!matchNotes) return false
+      }
+      for (const col of dynCols) {
+        const sel = columnFilters[col.key]
+        if (sel?.length && !cellMatchesColumnFilter(c, col, sel)) return false
+      }
+      return true
+    })
+  }, [contacts, search, columnFilters, dynCols])
+
+  const displayRows = useMemo(() => {
+    if (!dateSort?.key || !dateSort?.dir) return filtered
+    const col = dynCols.find(c => c.key === dateSort.key && c.dataType === 'date')
+    if (!col) return filtered
+    const mul = dateSort.dir === 'asc' ? 1 : -1
+    const arr = [...filtered]
+    arr.sort((a, b) => {
+      const va = parseSheetDate(getCellValue(a, col))
+      const vb = parseSheetDate(getCellValue(b, col))
+      if (va == null && vb == null) return 0
+      if (va == null) return 1 * mul
+      if (vb == null) return -1 * mul
+      return (va - vb) * mul
+    })
+    return arr
+  }, [filtered, dateSort, dynCols])
+
+  const cycleDateSort = (colKey) => {
+    setSelected(null)
+    setDateSort(prev => {
+      if (prev?.key !== colKey) return { key: colKey, dir: 'asc' }
+      if (prev.dir === 'asc') return { key: colKey, dir: 'desc' }
+      return null
+    })
+  }
+
+  const filterPopoverStyle = (fixed) => ({
+    position: fixed ? 'fixed' : 'absolute',
+    ...(fixed && filterMenuPos
+      ? { top: `${filterMenuPos.top}px`, left: `${filterMenuPos.left}px`, minWidth: `${Math.max(filterMenuPos.width || 200, 200)}px` }
+      : { top: '100%', left: 0, marginTop: '6px', minWidth: '200px' }),
+    maxWidth: 'min(280px, calc(100vw - 24px))',
+    maxHeight: 'min(280px, 50vh)',
+    overflowY: 'auto',
+    background: '#fff',
+    borderRadius: '10px',
+    boxShadow: '0 8px 28px rgba(0,0,0,0.12)',
+    border: '1px solid #e8e8e8',
+    padding: '8px 0',
+    zIndex: 5000,
+    textAlign: 'left',
+    fontWeight: '400',
+    textTransform: 'none',
+    letterSpacing: 'normal',
   })
+
+  const renderColumnFilterOptions = (col) => {
+    const options = uniqueOptionsByCol[col.key] || []
+    const selected = columnFilters[col.key] || []
+    if (options.length === 0) {
+      return <p style={{ padding: '8px 14px', margin: 0, fontSize: '12px', color: '#888' }}>No values in this sheet yet.</p>
+    }
+    return (
+      <>
+        {options.map(opt => (
+          <label
+            key={opt}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '12px', color: '#333', cursor: 'pointer', userSelect: 'none' }}
+            onMouseDown={e => e.preventDefault()}>
+            <input
+              type="checkbox"
+              checked={selected.includes(opt)}
+              onChange={() => toggleColumnFilterValue(col.key, opt)}
+              style={{ accentColor: '#4f46e5', cursor: 'pointer' }}
+            />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt === EMPTY_SENTINEL ? '(Blanks)' : opt}</span>
+          </label>
+        ))}
+        {selected.length > 0 && (
+          <button
+            type="button"
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => clearColumnFilter(col.key)}
+            style={{ margin: '6px 14px 4px', padding: '6px 10px', fontSize: '11px', fontWeight: '600', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer', width: 'calc(100% - 28px)' }}>
+            Clear this column
+          </button>
+        )}
+      </>
+    )
+  }
+
+  const renderNotesFilterOptions = () => {
+    const selected = columnFilters[NOTES_FILTER_KEY] || []
+    const opts = [
+      { v: NOTES_HAS, label: 'Has notes' },
+      { v: NOTES_NO, label: 'No notes' },
+    ]
+    return (
+      <>
+        {opts.map(({ v, label }) => (
+          <label
+            key={v}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '12px', color: '#333', cursor: 'pointer', userSelect: 'none' }}
+            onMouseDown={e => e.preventDefault()}>
+            <input
+              type="checkbox"
+              checked={selected.includes(v)}
+              onChange={() => toggleColumnFilterValue(NOTES_FILTER_KEY, v)}
+              style={{ accentColor: '#4f46e5', cursor: 'pointer' }}
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+        {selected.length > 0 && (
+          <button
+            type="button"
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => clearColumnFilter(NOTES_FILTER_KEY)}
+            style={{ margin: '6px 14px 4px', padding: '6px 10px', fontSize: '11px', fontWeight: '600', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer', width: 'calc(100% - 28px)' }}>
+            Clear notes filter
+          </button>
+        )}
+      </>
+    )
+  }
 
   const statusStyle = (val) => {
     const s = (val || '').toUpperCase()
@@ -234,7 +521,7 @@ const dynCols = buildColumns(columnMapping)
     window.addEventListener('mouseup', onUp)
   }
 
-  const handleEdit = () => { setEditData({ ...filtered[selected] }); setEditing(true) }
+  const handleEdit = () => { setEditData({ ...displayRows[selected] }); setEditing(true) }
   const handleCancel = () => { setEditing(false); setEditData(null) }
 
   const handleSave = async () => {
@@ -280,7 +567,11 @@ const dynCols = buildColumns(columnMapping)
     setRemapSaving(true)
     const { data, error } = await supabase
       .from('user_sheets')
-      .update({ column_mapping: finalMapping })
+      .update({
+        column_mapping: finalMapping,
+        contacts_cache: null,
+        contacts_cache_at: null,
+      })
       .eq('id', activeSheet.id)
       .select()
       .single()
@@ -331,15 +622,6 @@ const dynCols = buildColumns(columnMapping)
       />
     </div>
   )
-
-  const dropdownStyle = (active) => ({
-    padding: '10px 14px', fontSize: '13px', fontWeight: '600',
-    border: `1.5px solid ${active ? '#4f46e5' : '#ddd'}`,
-    borderRadius: '10px', outline: 'none',
-    background: active ? '#ede9fe' : '#fff',
-    cursor: 'pointer', color: active ? '#4f46e5' : '#888',
-    boxShadow: '0 1px 4px rgba(0,0,0,0.06)', flex: 1
-  })
 
   const panelHeader = (contact) => (
     <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -506,37 +788,53 @@ const dynCols = buildColumns(columnMapping)
 
   const searchAndFilters = (
     <div style={{ padding: '16px 16px 8px' }}>
-      <input type="text" placeholder="Search by name, organization or location..." value={search} onChange={(e) => setSearch(e.target.value)}
+      <input type="text" placeholder="Search name, organization, location…" value={search} onChange={(e) => setSearch(e.target.value)}
         style={{ width: '100%', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', marginBottom: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', boxSizing: 'border-box' }} />
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <select value={responseFilter || ''} onChange={e => setResponseFilter(e.target.value || null)} style={dropdownStyle(responseFilter)}>
-          <option value=''>Response</option>
-          <option value='HOT'>Hot</option>
-          <option value='WARM'>Warm</option>
-          <option value='COLD'>Cold</option>
+      {dateColumns.length > 0 && (
+        <select
+          value={dateSort ? `${dateSort.key}:${dateSort.dir}` : ''}
+          onChange={e => {
+            setSelected(null)
+            const v = e.target.value
+            if (!v) setDateSort(null)
+            else {
+              const [k, d] = v.split(':')
+              setDateSort({ key: k, dir: d })
+            }
+          }}
+          style={{ width: '100%', padding: '10px 12px', fontSize: '13px', borderRadius: '10px', border: '1px solid #ddd', marginBottom: '10px', background: '#fff', color: '#333', boxSizing: 'border-box' }}>
+          <option value="">Date sort: none</option>
+          {dateColumns.flatMap(c => [
+            <option key={`${c.key}:asc`} value={`${c.key}:asc`}>{c.label} · oldest first</option>,
+            <option key={`${c.key}:desc`} value={`${c.key}:desc`}>{c.label} · newest first</option>,
+          ])}
         </select>
-        <select value={statusFilter || ''} onChange={e => setStatusFilter(e.target.value || null)} style={dropdownStyle(statusFilter)}>
-          <option value=''>Status</option>
-          <option value='NEW'>New</option>
-          <option value='INFO DONE'>Info Done</option>
-          <option value='INVITE SENT'>Invite Sent</option>
-          <option value='PLAN LINED UP'>Plan Lined Up</option>
-          <option value='PLAN DONE'>Plan Done</option>
-          <option value='TO BE INVITED'>To Be Invited</option>
-        </select>
-        {(responseFilter || statusFilter || search) && (
-          <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }}
+      )}
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <button
+          type="button"
+          onClick={() => setMobileFiltersOpen(true)}
+          style={{
+            padding: '10px 14px', fontSize: '13px', fontWeight: '600',
+            border: `1.5px solid ${hasActiveColumnFilters ? '#4f46e5' : '#ddd'}`,
+            borderRadius: '10px', background: hasActiveColumnFilters ? '#ede9fe' : '#fff', color: hasActiveColumnFilters ? '#4f46e5' : '#555', cursor: 'pointer', boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+          }}>
+          Column filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+        </button>
+        {(search || hasActiveColumnFilters || dateSort) && (
+          <button
+            type="button"
+            onClick={() => { setSearch(''); clearAllColumnFilters(); setDateSort(null); setSelected(null) }}
             style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-            Clear
+            Clear all
           </button>
         )}
       </div>
-      {(search || responseFilter || statusFilter) && (
+      {(search || hasActiveColumnFilters || dateSort) && (
         <p style={{ fontSize: '12px', color: '#888', margin: '8px 0 0' }}>
-          {filtered.length.toLocaleString()} results
-          {responseFilter && ` · ${responseFilter}`}
-          {statusFilter && ` · ${statusFilter}`}
-          {search && ` · "${search}"`}
+          {displayRows.length.toLocaleString()} shown
+          {search && ` · search “${search}”`}
+          {dateSort && ` · ${dateColumns.find(c => c.key === dateSort.key)?.label || 'Date'} ${dateSort.dir === 'asc' ? 'oldest first' : 'newest first'}`}
         </p>
       )}
     </div>
@@ -568,11 +866,74 @@ const dynCols = buildColumns(columnMapping)
           </div>
         )}
 
+        {!isMobile && filterMenuPos && openFilterCol && (() => {
+          if (openFilterCol === NOTES_FILTER_KEY) {
+            return createPortal(
+              <div data-col-filter-portal style={filterPopoverStyle(true)} onClick={e => e.stopPropagation()}>
+                <p style={{ margin: '0 0 6px', padding: '0 14px', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>Notes</p>
+                {renderNotesFilterOptions()}
+              </div>,
+              document.body
+            )
+          }
+          const colForMenu = dynCols.find(c => c.key === openFilterCol)
+          if (!colForMenu) return null
+          return createPortal(
+            <div data-col-filter-portal style={filterPopoverStyle(true)} onClick={e => e.stopPropagation()}>
+              <p style={{ margin: '0 0 6px', padding: '0 14px', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>{colForMenu.label}</p>
+              {renderColumnFilterOptions(colForMenu)}
+            </div>,
+            document.body
+          )
+        })()}
+
         {isMobile ? (
           <div>
             {searchAndFilters}
+            {mobileFiltersOpen && (
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 450, background: 'rgba(0,0,0,0.4)' }}
+                onClick={() => setMobileFiltersOpen(false)}>
+                <div
+                  style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '78vh', background: '#fff', borderRadius: '16px 16px 0 0', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 -8px 32px rgba(0,0,0,0.15)' }}
+                  onClick={e => e.stopPropagation()}>
+                  <div style={{ width: '40px', height: '4px', background: '#ddd', borderRadius: '2px', margin: '10px auto 0' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px', borderBottom: '1px solid #eee' }}>
+                    <span style={{ fontSize: '16px', fontWeight: '700', color: '#111' }}>Column filters</span>
+                    <button type="button" onClick={() => setMobileFiltersOpen(false)} style={{ fontSize: '14px', fontWeight: '600', color: '#4f46e5', border: 'none', background: 'none', cursor: 'pointer' }}>Done</button>
+                  </div>
+                  <div style={{ overflowY: 'auto', padding: '8px 0 24px', flex: 1 }}>
+                    <div style={{ marginBottom: '16px', padding: '0 16px' }}>
+                      <p style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
+                      <div style={{ border: '1px solid #e8e8e8', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>
+                        {renderNotesFilterOptions()}
+                      </div>
+                    </div>
+                    {dynCols.length === 0 && <p style={{ padding: '16px', color: '#888', fontSize: '14px' }}>No mapped columns to filter.</p>}
+                    {dynCols.map(col => (
+                      <div key={col.key} style={{ marginBottom: '16px', padding: '0 16px' }}>
+                        <p style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>{col.label}</p>
+                        <div style={{ border: '1px solid #e8e8e8', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>
+                          {renderColumnFilterOptions(col)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {hasActiveColumnFilters && (
+                    <div style={{ padding: '12px 16px', borderTop: '1px solid #eee' }}>
+                      <button
+                        type="button"
+                        onClick={() => clearAllColumnFilters()}
+                        style={{ width: '100%', padding: '12px', fontSize: '14px', fontWeight: '600', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', cursor: 'pointer' }}>
+                        Clear all column filters
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div style={{ padding: '0 12px 100px' }}>
-              {filtered.map((c, i) => (
+              {displayRows.map((c, i) => (
                 <div key={i} className="contact-card" onClick={() => { setSelected(i); setEditing(false); setEditData(null) }}
                   style={{ background: '#fff', borderRadius: '14px', border: '1px solid #e8e8e8', padding: '14px 16px', marginBottom: '10px', cursor: 'pointer', transition: 'border-color 0.15s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
@@ -594,13 +955,13 @@ const dynCols = buildColumns(columnMapping)
               ))}
             </div>
 
-            {selected !== null && filtered[selected] && (
+            {selected !== null && displayRows[selected] && (
               <div style={{ position: 'fixed', inset: 0, zIndex: 200 }}>
                 <div onClick={() => { setSelected(null); setEditing(false); setEditData(null) }} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} />
                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: '#fff', borderRadius: '20px 20px 0 0', maxHeight: '85vh', overflowY: 'auto', animation: 'slideUp 0.25s ease' }}>
                   <div style={{ width: '40px', height: '4px', background: '#ddd', borderRadius: '2px', margin: '12px auto 0' }} />
-                  {panelHeader(filtered[selected])}
-                  {panelContent(filtered[selected])}
+                  {panelHeader(displayRows[selected])}
+                  {panelContent(displayRows[selected])}
                 </div>
               </div>
             )}
@@ -610,53 +971,135 @@ const dynCols = buildColumns(columnMapping)
           <div style={{ display: 'flex', height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
             <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '20px 24px' }}>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
-                <input type="text" placeholder="Search by name, organization or location..." value={search} onChange={(e) => setSearch(e.target.value)}
+                <input type="text" placeholder="Search name, organization, location…" value={search} onChange={(e) => setSearch(e.target.value)}
                   style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }} />
-                <select value={responseFilter || ''} onChange={e => setResponseFilter(e.target.value || null)} style={{ ...dropdownStyle(responseFilter), flex: 'none' }}>
-                  <option value=''>Response</option>
-                  <option value='HOT'>Hot</option>
-                  <option value='WARM'>Warm</option>
-                  <option value='COLD'>Cold</option>
-                </select>
-                <select value={statusFilter || ''} onChange={e => setStatusFilter(e.target.value || null)} style={{ ...dropdownStyle(statusFilter), flex: 'none' }}>
-                  <option value=''>Status</option>
-                  <option value='NEW'>New</option>
-                  <option value='INFO DONE'>Info Done</option>
-                  <option value='INVITE SENT'>Invite Sent</option>
-                  <option value='PLAN LINED UP'>Plan Lined Up</option>
-                  <option value='PLAN DONE'>Plan Done</option>
-                  <option value='TO BE INVITED'>To Be Invited</option>
-                </select>
-                {(responseFilter || statusFilter || search) && (
-                  <button onClick={() => { setResponseFilter(null); setStatusFilter(null); setSearch('') }}
-                    style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>
-                    Clear
+                {(search || hasActiveColumnFilters || dateSort) && (
+                  <button
+                    type="button"
+                    onClick={() => { setSearch(''); clearAllColumnFilters(); setDateSort(null); setSelected(null) }}
+                    style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', flexShrink: 0 }}>
+                    Clear all
                   </button>
                 )}
               </div>
 
-              {(search || responseFilter || statusFilter) && (
+              {(search || hasActiveColumnFilters || dateSort) && (
                 <p style={{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
-                  {filtered.length.toLocaleString()} results
-                  {responseFilter && ` · Response: ${responseFilter}`}
-                  {statusFilter && ` · Status: ${statusFilter}`}
-                  {search && ` · "${search}"`}
+                  {displayRows.length.toLocaleString()} shown
+                  {search && ` · “${search}”`}
+                  {hasActiveColumnFilters && ` · ${activeFilterCount} filter value${activeFilterCount === 1 ? '' : 's'}`}
                 </p>
               )}
 
-              <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'hidden' }}>
+              {dateColumns.length > 0 && (
+                <div style={{ marginBottom: '12px' }}>
+                  <select
+                    value={dateSort ? `${dateSort.key}:${dateSort.dir}` : ''}
+                    onChange={e => {
+                      setSelected(null)
+                      const v = e.target.value
+                      if (!v) setDateSort(null)
+                      else {
+                        const [k, d] = v.split(':')
+                        setDateSort({ key: k, dir: d })
+                      }
+                    }}
+                    style={{ maxWidth: '320px', padding: '9px 12px', fontSize: '13px', borderRadius: '10px', border: '1px solid #ddd', background: '#fff', color: '#333' }}>
+                    <option value="">Date sort: none</option>
+                    {dateColumns.flatMap(c => [
+                      <option key={`${c.key}:asc`} value={`${c.key}:asc`}>{c.label} · oldest first</option>,
+                      <option key={`${c.key}:desc`} value={`${c.key}:desc`}>{c.label} · newest first</option>,
+                    ])}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'visible' }}>
+                <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
                   <thead>
                     <tr style={{ background: '#faf9ff', borderBottom: '2px solid #ede9fe' }}>
                       <th style={th}>Name</th>
-                      {dynCols.map(col => (
-                        <th key={col.key} style={th}>{col.label}</th>
-                      ))}
-                      <th style={{ ...th, textAlign: 'center' }}>Notes</th>
+                      {dynCols.map(col => {
+                        const sel = columnFilters[col.key] || []
+                        const hasFilter = sel.length > 0
+                        return (
+                          <th key={col.key} style={{ ...th, position: 'relative', verticalAlign: 'bottom' }}>
+                            <div data-col-filter style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '2px', maxWidth: '100%' }}>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col.label}</span>
+                              {col.dataType === 'date' && (
+                                <DateSortButton
+                                  active={dateSort?.key === col.key}
+                                  dir={dateSort?.dir}
+                                  onCycle={() => cycleDateSort(col.key)}
+                                />
+                              )}
+                              <button
+                                type="button"
+                                data-col-filter
+                                title={`Filter ${col.label}`}
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  if (openFilterCol === col.key) {
+                                    setOpenFilterCol(null)
+                                    setFilterMenuPos(null)
+                                  } else {
+                                    const r = e.currentTarget.getBoundingClientRect()
+                                    const maxLeft = window.innerWidth - 288
+                                    setFilterMenuPos({
+                                      top: r.bottom + 6,
+                                      left: Math.max(8, Math.min(r.left, maxLeft)),
+                                      width: r.width,
+                                    })
+                                    setOpenFilterCol(col.key)
+                                  }
+                                }}
+                                style={{
+                                  flexShrink: 0, padding: '2px 4px', margin: 0, border: 'none', background: hasFilter ? '#ede9fe' : 'transparent',
+                                  cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', color: '#666',
+                                }}>
+                                <FilterChevron open={openFilterCol === col.key} active={hasFilter} />
+                              </button>
+                            </div>
+                          </th>
+                        )
+                      })}
+                      <th style={{ ...th, textAlign: 'center', position: 'relative', verticalAlign: 'bottom' }}>
+                        <div data-col-filter style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', justifyContent: 'center' }}>
+                          <span>Notes</span>
+                          <button
+                            type="button"
+                            data-col-filter
+                            title="Filter by notes"
+                            onClick={e => {
+                              e.stopPropagation()
+                              if (openFilterCol === NOTES_FILTER_KEY) {
+                                setOpenFilterCol(null)
+                                setFilterMenuPos(null)
+                              } else {
+                                const r = e.currentTarget.getBoundingClientRect()
+                                const maxLeft = window.innerWidth - 288
+                                setFilterMenuPos({
+                                  top: r.bottom + 6,
+                                  left: Math.max(8, Math.min(r.left, maxLeft)),
+                                  width: r.width,
+                                })
+                                setOpenFilterCol(NOTES_FILTER_KEY)
+                              }
+                            }}
+                            style={{
+                              flexShrink: 0, padding: '2px 4px', margin: 0, border: 'none',
+                              background: (columnFilters[NOTES_FILTER_KEY] || []).length ? '#ede9fe' : 'transparent',
+                              cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', color: '#666',
+                            }}>
+                            <FilterChevron open={openFilterCol === NOTES_FILTER_KEY} active={(columnFilters[NOTES_FILTER_KEY] || []).length > 0} />
+                          </button>
+                        </div>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((c, i) => (
+                    {displayRows.map((c, i) => (
                       <tr key={i} className={`contact-row${selected === i ? ' active' : ''}`}
                         style={{ borderBottom: '1px solid #f5f5f5', cursor: 'pointer', background: 'transparent' }}
                         onClick={() => { setSelected(selected === i ? null : i); setEditing(false); setEditData(null) }}>
@@ -676,18 +1119,19 @@ const dynCols = buildColumns(columnMapping)
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
 
-            {selected !== null && filtered[selected] && (
+            {selected !== null && displayRows[selected] && (
               <>
                 <div onMouseDown={startDrag}
                   style={{ width: '5px', cursor: 'col-resize', background: dragging ? '#4f46e5' : 'transparent', transition: 'background 0.2s', flexShrink: 0, zIndex: 10 }}
                   onMouseEnter={e => e.currentTarget.style.background = '#c7d2fe'}
                   onMouseLeave={e => { if (!dragging) e.currentTarget.style.background = 'transparent' }} />
                 <div style={{ width: `${panelWidth}px`, minWidth: '260px', background: '#fff', borderLeft: '1px solid #e0e0e0', overflowY: 'auto', boxShadow: '-4px 0 20px rgba(79,70,229,0.08)', animation: 'slideIn 0.2s ease', flexShrink: 0 }}>
-                  {panelHeader(filtered[selected])}
-                  {panelContent(filtered[selected])}
+                  {panelHeader(displayRows[selected])}
+                  {panelContent(displayRows[selected])}
                 </div>
               </>
             )}
@@ -704,5 +1148,5 @@ const dynCols = buildColumns(columnMapping)
   )
 }
 
-const th = { padding: '9px 10px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const th = { padding: '9px 10px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px', overflow: 'visible', whiteSpace: 'nowrap' }
 const td = { padding: '9px 10px', fontSize: '12px' }

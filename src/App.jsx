@@ -74,6 +74,11 @@ export default function App() {
     setActiveSheet(updatedSheet)
   }
 
+  const handleSheetCacheUpdate = (sheetId, patch) => {
+    setSheets(prev => prev.map(s => (s.id === sheetId ? { ...s, ...patch } : s)))
+    setActiveSheet(prev => (prev && prev.id === sheetId ? { ...prev, ...patch } : prev))
+  }
+
   // Cancel adding sheet — go back to existing active sheet
   const handleCancelAddSheet = () => {
     setAddingSheet(false)
@@ -105,6 +110,8 @@ export default function App() {
       onSwitchSheet={setActiveSheet}
       onAddSheet={() => setAddingSheet(true)}
       onRemapDone={handleRemapDone}
-      onSheetDeleted={handleSheetDeleted}    />
+      onSheetDeleted={handleSheetDeleted}
+      onSheetCacheUpdate={handleSheetCacheUpdate}
+    />
   )
 }

@@ -4,6 +4,7 @@ const FIXED_FIELDS = [
   { key: 'first_name',   label: 'First Name' },
   { key: 'middle_name',  label: 'Middle Name' },
   { key: 'last_name',    label: 'Last Name' },
+  { key: 'organization', label: 'Organization' },
   { key: 'status',       label: 'Status' },
   { key: 'response',     label: 'Response' },
   { key: 'notes',        label: 'Notes' },
@@ -13,7 +14,9 @@ const FIXED_FIELDS = [
 
 export default function ColumnMapper({ headers, initialMapping, onConfirm, onBack, saving }) {
   const [fixedMapping, setFixedMapping] = useState({})
-  // extra: array of { label: string, colIndex: number|null }
+  /** per fixed field key: 'text' | 'date' (date → sortable in the table) */
+  const [fieldTypes, setFieldTypes] = useState({})
+  // extra: { label, colIndex, dataType?: 'text'|'date' }
   const [extraFields, setExtraFields] = useState([])
 
   useEffect(() => {
@@ -24,18 +27,29 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
     })
     setFixedMapping(fixed)
 
+    const ft = {}
+    FIXED_FIELDS.forEach(field => {
+      ft[field.key] = initialMapping.fieldTypes?.[field.key] === 'date' ? 'date' : 'text'
+    })
+    setFieldTypes(ft)
+
     // Find already-mapped column indices for fixed fields
     const usedIndices = new Set(Object.values(fixed).filter(v => v !== null))
 
     // Pre-populate extra fields from initialMapping.extra if present
     if (initialMapping.extra && Array.isArray(initialMapping.extra)) {
-      setExtraFields(initialMapping.extra)
+      setExtraFields(
+        initialMapping.extra.map(e => ({
+          ...e,
+          dataType: e.dataType === 'date' ? 'date' : 'text',
+        }))
+      )
     } else {
       // Auto-suggest unmapped columns as extra fields
       const suggestions = headers
         .map((h, i) => ({ label: h, colIndex: i }))
         .filter(({ colIndex }) => !usedIndices.has(colIndex))
-      setExtraFields(suggestions.map(s => ({ label: s.label, colIndex: s.colIndex })))
+      setExtraFields(suggestions.map(s => ({ label: s.label, colIndex: s.colIndex, dataType: 'text' })))
     }
   }, [])
 
@@ -47,8 +61,12 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
     setExtraFields(prev => prev.map((e, i) => i === index ? { ...e, [field]: field === 'colIndex' ? (value === '' ? null : Number(value)) : value } : e))
   }
 
+  const setFieldType = (key, value) => {
+    setFieldTypes(prev => ({ ...prev, [key]: value }))
+  }
+
   const addExtra = () => {
-    setExtraFields(prev => [...prev, { label: '', colIndex: null }])
+    setExtraFields(prev => [...prev, { label: '', colIndex: null, dataType: 'text' }])
   }
 
   const removeExtra = (index) => {
@@ -56,9 +74,20 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
   }
 
   const handleConfirm = () => {
+    const fieldTypesOut = {}
+    FIXED_FIELDS.forEach(f => {
+      fieldTypesOut[f.key] = fieldTypes[f.key] === 'date' ? 'date' : 'text'
+    })
     const finalMapping = {
       ...fixedMapping,
-      extra: extraFields.filter(e => e.colIndex !== null && e.label.trim() !== '')
+      fieldTypes: fieldTypesOut,
+      extra: extraFields
+        .filter(e => e.colIndex !== null && e.label.trim() !== '')
+        .map(e => ({
+          label: e.label.trim(),
+          colIndex: e.colIndex,
+          dataType: e.dataType === 'date' ? 'date' : 'text',
+        })),
     }
     onConfirm(finalMapping)
   }
@@ -93,19 +122,28 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
         {/* Fixed fields */}
         <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 12px' }}>Standard Fields</p>
         {FIXED_FIELDS.map(({ key, label }) => (
-          <div key={key} style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div key={key} style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <div style={{ width: '130px', flexShrink: 0 }}>
               <p style={{ fontSize: '12px', fontWeight: '700', color: '#555', margin: 0, textTransform: 'uppercase', letterSpacing: '0.4px' }}>{label}</p>
             </div>
             <select
               value={fixedMapping[key] !== null && fixedMapping[key] !== undefined ? fixedMapping[key] : ''}
               onChange={e => setFixed(key, e.target.value)}
-              style={selectStyle(fixedMapping[key] !== null && fixedMapping[key] !== undefined)}
+              style={{ ...selectStyle(fixedMapping[key] !== null && fixedMapping[key] !== undefined), flex: '1 1 160px', minWidth: '120px' }}
             >
               <option value=''>Not mapped</option>
               {headers.map((h, i) => (
                 <option key={i} value={i}>{h || `Column ${i + 1}`}</option>
               ))}
+            </select>
+            <select
+              value={fieldTypes[key] === 'date' ? 'date' : 'text'}
+              onChange={e => setFieldType(key, e.target.value)}
+              title="Date columns can be sorted in the table"
+              style={{ width: '100px', flexShrink: 0, padding: '8px 10px', fontSize: '12px', border: '1.5px solid #ddd', borderRadius: '8px', outline: 'none', background: '#fff', color: '#333', cursor: 'pointer' }}
+            >
+              <option value="text">Text</option>
+              <option value="date">Date</option>
             </select>
           </div>
         ))}
@@ -127,7 +165,7 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
           )}
 
           {extraFields.map((extra, i) => (
-            <div key={i} style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div key={i} style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <input
                 type="text"
                 placeholder="Column label"
@@ -138,12 +176,21 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
               <select
                 value={extra.colIndex !== null && extra.colIndex !== undefined ? extra.colIndex : ''}
                 onChange={e => setExtra(i, 'colIndex', e.target.value)}
-                style={selectStyle(extra.colIndex !== null && extra.colIndex !== undefined)}
+                style={{ ...selectStyle(extra.colIndex !== null && extra.colIndex !== undefined), flex: '1 1 140px', minWidth: '120px' }}
               >
                 <option value=''>Not mapped</option>
                 {headers.map((h, idx) => (
                   <option key={idx} value={idx}>{h || `Column ${idx + 1}`}</option>
                 ))}
+              </select>
+              <select
+                value={extra.dataType === 'date' ? 'date' : 'text'}
+                onChange={e => setExtra(i, 'dataType', e.target.value)}
+                title="Date columns can be sorted in the table"
+                style={{ width: '100px', flexShrink: 0, padding: '8px 10px', fontSize: '12px', border: '1.5px solid #ddd', borderRadius: '8px', outline: 'none', background: '#fff', color: '#333', cursor: 'pointer' }}
+              >
+                <option value="text">Text</option>
+                <option value="date">Date</option>
               </select>
               <button
                 onClick={() => removeExtra(i)}

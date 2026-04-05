@@ -6,6 +6,7 @@ export default function Login() {
       provider: 'google',
       options: {
         scopes: 'https://www.googleapis.com/auth/spreadsheets',
+        // Must match Supabase Auth → URL Configuration → Redirect URLs (e.g. https://your-site.pages.dev).
         redirectTo: window.location.origin,
         queryParams: {
           access_type: 'offline',
