@@ -74,6 +74,10 @@ function normalizeColumnMapping(raw) {
 
 const BADGE_KEYS = new Set(['status', 'response'])
 
+// ── CHANGE 1: buildColumns now reads ALL dataTypes from fieldTypes + extra ──
+// Old code only read 'date'/'text' from e.dataType.
+// Now it also picks up 'number', 'datetime', 'boolean', 'status', 'name'
+// for both fixed fields (via columnMapping.fieldTypes) and extra fields.
 function buildColumns(columnMapping) {
   const cols = []
   const fixedFields = [
@@ -83,10 +87,11 @@ function buildColumns(columnMapping) {
     { key: 'mobile_no',    label: 'Mobile' },
     { key: 'location',     label: 'Location' },
   ]
+  const fieldTypes = columnMapping.fieldTypes || {}
   fixedFields.forEach(({ key, label }) => {
     const idx = columnMapping[key]
     if (idx !== null && idx !== undefined) {
-      cols.push({ key, label, colIndex: idx, type: 'fixed', dataType: 'text' })
+      cols.push({ key, label, colIndex: idx, type: 'fixed', dataType: fieldTypes[key] || 'text' })
     }
   })
   if (columnMapping.extra && Array.isArray(columnMapping.extra)) {
@@ -137,6 +142,13 @@ function parseSheetDate(raw) {
   return null
 }
 
+// ── CHANGE 2: parseNumber helper for number-typed columns ──────────────────
+function parseNumber(raw) {
+  if (raw == null) return null
+  const n = parseFloat(String(raw).replace(/[^0-9.\-]/g, ''))
+  return Number.isNaN(n) ? null : n
+}
+
 function uniqueValuesForColumn(contacts, col) {
   const seen = new Set()
   let hasBlank = false
@@ -166,10 +178,12 @@ function FilterChevron({ open, active }) {
   )
 }
 
-function DateSortButton({ active, dir, onCycle }) {
+// ── CHANGE 3: SortButton now used for BOTH date and number columns ──────────
+// Renamed from DateSortButton → SortButton, same visual, works for any sortable col.
+function SortButton({ active, dir, onCycle, title }) {
   return (
     <button type="button"
-      title={active ? (dir === 'asc' ? 'Sorted oldest → newest' : 'Sorted newest → oldest') : 'Sort by date'}
+      title={title || (active ? (dir === 'asc' ? 'Sorted low → high' : 'Sorted high → low') : 'Sort')}
       onClick={e => { e.stopPropagation(); onCycle() }}
       style={{ flexShrink: 0, padding: '2px 5px', margin: 0, border: 'none', background: active ? '#dbeafe' : 'transparent', cursor: 'pointer', borderRadius: '4px', fontSize: '12px', fontWeight: '700', color: active ? '#1d4ed8' : '#94a3b8', lineHeight: 1 }}>
       {active ? (dir === 'asc' ? '↑' : '↓') : '⇅'}
@@ -193,7 +207,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const [openFilterCol, setOpenFilterCol] = useState(null)
   const [filterMenuPos, setFilterMenuPos] = useState(null)
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
-  const [dateSort, setDateSort] = useState(null)
+  const [colSort, setColSort] = useState(null) // { key, dir, dataType } — replaces dateSort
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [sheetDropOpen, setSheetDropOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -224,7 +238,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setOpenFilterCol(null)
     setFilterMenuPos(null)
     setMobileFiltersOpen(false)
-    setDateSort(null)
+    setColSort(null)
     setCacheHit(null)
     setLoading(true)
 
@@ -323,7 +337,13 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   )
   const hasActiveColumnFilters = activeFilterCount > 0
 
-  const dateColumns = useMemo(() => dynCols.filter(c => c.dataType === 'date'), [dynCols])
+  // ── CHANGE 4: sortable columns = date OR number ────────────────────────────
+  const sortableColumns = useMemo(
+    () => dynCols.filter(c => c.dataType === 'date' || c.dataType === 'datetime' || c.dataType === 'number'),
+    [dynCols]
+  )
+  // Keep dateColumns alias so the mobile date-sort <select> still works
+  const dateColumns = useMemo(() => dynCols.filter(c => c.dataType === 'date' || c.dataType === 'datetime'), [dynCols])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -347,26 +367,35 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     })
   }, [contacts, search, columnFilters, dynCols])
 
+  // ── CHANGE 5: displayRows sorts by date OR number depending on dataType ────
   const displayRows = useMemo(() => {
-    if (!dateSort?.key || !dateSort?.dir) return filtered
-    const col = dynCols.find(c => c.key === dateSort.key && c.dataType === 'date')
+    if (!colSort?.key || !colSort?.dir) return filtered
+    const col = dynCols.find(c => c.key === colSort.key)
     if (!col) return filtered
-    const mul = dateSort.dir === 'asc' ? 1 : -1
+    const mul = colSort.dir === 'asc' ? 1 : -1
     return [...filtered].sort((a, b) => {
-      const va = parseSheetDate(getCellValue(a, col))
-      const vb = parseSheetDate(getCellValue(b, col))
+      let va, vb
+      if (col.dataType === 'number') {
+        va = parseNumber(getCellValue(a, col))
+        vb = parseNumber(getCellValue(b, col))
+      } else {
+        // date or datetime
+        va = parseSheetDate(getCellValue(a, col))
+        vb = parseSheetDate(getCellValue(b, col))
+      }
       if (va == null && vb == null) return 0
-      if (va == null) return 1 * mul
+      if (va == null) return 1 * mul   // nulls to end
       if (vb == null) return -1 * mul
       return (va - vb) * mul
     })
-  }, [filtered, dateSort, dynCols])
+  }, [filtered, colSort, dynCols])
 
-  const cycleDateSort = (colKey) => {
+  // ── CHANGE 6: cycleSort works for any col key (not just date) ─────────────
+  const cycleSort = (colKey, dataType) => {
     setSelected(null)
-    setDateSort(prev => {
-      if (prev?.key !== colKey) return { key: colKey, dir: 'asc' }
-      if (prev.dir === 'asc') return { key: colKey, dir: 'desc' }
+    setColSort(prev => {
+      if (prev?.key !== colKey) return { key: colKey, dir: 'asc', dataType }
+      if (prev.dir === 'asc') return { key: colKey, dir: 'desc', dataType }
       return null
     })
   }
@@ -691,7 +720,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   // ── Table header cell with filter ──────────────────────────────────────────
   const thFilterBtn = (key, hasFilter) => (
-    <button type="button" data-col-filter title={`Filter`} onClick={e => openFilter(e, key)}
+    <button type="button" data-col-filter title="Filter" onClick={e => openFilter(e, key)}
       style={{ flexShrink: 0, padding: '2px 4px', margin: 0, border: 'none', background: hasFilter ? '#ede9fe' : 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', color: '#666' }}>
       <FilterChevron open={openFilterCol === key} active={hasFilter} />
     </button>
@@ -707,14 +736,14 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           style={{ padding: '10px 14px', fontSize: '13px', fontWeight: '600', border: `1.5px solid ${hasActiveColumnFilters ? '#4f46e5' : '#ddd'}`, borderRadius: '10px', background: hasActiveColumnFilters ? '#ede9fe' : '#fff', color: hasActiveColumnFilters ? '#4f46e5' : '#555', cursor: 'pointer' }}>
           Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
         </button>
-        {(search || hasActiveColumnFilters || dateSort) && (
-          <button type="button" onClick={() => { setSearch(''); clearAllColumnFilters(); setDateSort(null); setSelected(null) }}
+        {(search || hasActiveColumnFilters || colSort) && (
+          <button type="button" onClick={() => { setSearch(''); clearAllColumnFilters(); setColSort(null); setSelected(null) }}
             style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>
             Clear all
           </button>
         )}
       </div>
-      {(search || hasActiveColumnFilters || dateSort) && (
+      {(search || hasActiveColumnFilters || colSort) && (
         <p style={{ fontSize: '12px', color: '#888', margin: '8px 0 0' }}>{displayRows.length.toLocaleString()} shown</p>
       )}
     </div>
@@ -762,7 +791,6 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           <div>
             {searchAndFilters}
 
-            {/* Mobile filter sheet */}
             {mobileFiltersOpen && (
               <div style={{ position: 'fixed', inset: 0, zIndex: 450, background: 'rgba(0,0,0,0.4)' }} onClick={() => setMobileFiltersOpen(false)}>
                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '78vh', background: '#fff', borderRadius: '16px 16px 0 0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
@@ -836,31 +864,44 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <input type="text" placeholder="Search name, organization, location…" value={search} onChange={e => setSearch(e.target.value)}
                   style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }} />
-                {dateColumns.length > 0 && (
-                  <select value={dateSort ? `${dateSort.key}:${dateSort.dir}` : ''}
-                    onChange={e => { setSelected(null); const v = e.target.value; if (!v) setDateSort(null); else { const [k, d] = v.split(':'); setDateSort({ key: k, dir: d }) } }}
+
+                {/* ── CHANGE 7: sort dropdown now covers number cols too ── */}
+                {sortableColumns.length > 0 && (
+                  <select value={colSort ? `${colSort.key}:${colSort.dir}` : ''}
+                    onChange={e => {
+                      setSelected(null)
+                      const v = e.target.value
+                      if (!v) { setColSort(null); return }
+                      const [k, d] = v.split(':')
+                      const col = dynCols.find(c => c.key === k)
+                      setColSort({ key: k, dir: d, dataType: col?.dataType })
+                    }}
                     style={{ padding: '10px 12px', fontSize: '13px', borderRadius: '10px', border: '1px solid #ddd', background: '#fff', color: '#333', cursor: 'pointer' }}>
-                    <option value="">Date sort: none</option>
-                    {dateColumns.flatMap(c => [
-                      <option key={`${c.key}:asc`} value={`${c.key}:asc`}>{c.label} · oldest first</option>,
-                      <option key={`${c.key}:desc`} value={`${c.key}:desc`}>{c.label} · newest first</option>,
-                    ])}
+                    <option value="">Sort: none</option>
+                    {sortableColumns.flatMap(c => {
+                      const isNum = c.dataType === 'number'
+                      return [
+                        <option key={`${c.key}:asc`} value={`${c.key}:asc`}>{c.label} · {isNum ? 'low → high' : 'oldest first'}</option>,
+                        <option key={`${c.key}:desc`} value={`${c.key}:desc`}>{c.label} · {isNum ? 'high → low' : 'newest first'}</option>,
+                      ]
+                    })}
                   </select>
                 )}
-                {(search || hasActiveColumnFilters || dateSort) && (
-                  <button type="button" onClick={() => { setSearch(''); clearAllColumnFilters(); setDateSort(null); setSelected(null) }}
+
+                {(search || hasActiveColumnFilters || colSort) && (
+                  <button type="button" onClick={() => { setSearch(''); clearAllColumnFilters(); setColSort(null); setSelected(null) }}
                     style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', flexShrink: 0 }}>
                     Clear all
                   </button>
                 )}
               </div>
 
-              {(search || hasActiveColumnFilters || dateSort) && (
+              {(search || hasActiveColumnFilters || colSort) && (
                 <p style={{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
                   {displayRows.length.toLocaleString()} shown
                   {search && ` · "${search}"`}
                   {hasActiveColumnFilters && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`}
-                  {dateSort && ` · ${dateColumns.find(c => c.key === dateSort.key)?.label} ${dateSort.dir === 'asc' ? 'oldest first' : 'newest first'}`}
+                  {colSort && ` · ${dynCols.find(c => c.key === colSort.key)?.label} ${colSort.dir === 'asc' ? (colSort.dataType === 'number' ? 'low → high' : 'oldest first') : (colSort.dataType === 'number' ? 'high → low' : 'newest first')}`}
                 </p>
               )}
 
@@ -872,11 +913,23 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                         <th style={th}>Name</th>
                         {dynCols.map(col => {
                           const hasFilter = (columnFilters[col.key] || []).length > 0
+                          const isSortable = col.dataType === 'date' || col.dataType === 'datetime' || col.dataType === 'number'
+                          const sortTitle = col.dataType === 'number'
+                            ? (colSort?.key === col.key ? (colSort.dir === 'asc' ? 'Sorted low → high' : 'Sorted high → low') : 'Sort by number')
+                            : (colSort?.key === col.key ? (colSort.dir === 'asc' ? 'Sorted oldest → newest' : 'Sorted newest → oldest') : 'Sort by date')
                           return (
                             <th key={col.key} style={{ ...th, position: 'relative' }}>
                               <div data-col-filter style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', maxWidth: '100%' }}>
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{col.label}</span>
-                                {col.dataType === 'date' && <DateSortButton active={dateSort?.key === col.key} dir={dateSort?.dir} onCycle={() => cycleDateSort(col.key)} />}
+                                {/* ── CHANGE 8: SortButton shown for date OR number ── */}
+                                {isSortable && (
+                                  <SortButton
+                                    active={colSort?.key === col.key}
+                                    dir={colSort?.dir}
+                                    onCycle={() => cycleSort(col.key, col.dataType)}
+                                    title={sortTitle}
+                                  />
+                                )}
                                 {thFilterBtn(col.key, hasFilter)}
                               </div>
                             </th>

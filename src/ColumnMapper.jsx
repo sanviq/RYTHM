@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import ColumnTypeSelector, { COLUMN_TYPES } from './ColumnTypeSelector'
+import '../styles/columnTypes.css'
 
 const FIXED_FIELDS = [
   { key: 'first_name',   label: 'First Name' },
@@ -12,15 +14,22 @@ const FIXED_FIELDS = [
   { key: 'location',     label: 'Location / City' },
 ]
 
+/**
+ * Migrate old 'text'|'date' values to the new full type ids.
+ * 'date' stays 'date', 'text' stays 'text' — nothing breaks.
+ * Also maps any stray undefined/null → 'text'.
+ */
+function migrateType(raw) {
+  const valid = COLUMN_TYPES.map(t => t.id)
+  return valid.includes(raw) ? raw : 'text'
+}
+
 export default function ColumnMapper({ headers, initialMapping, onConfirm, onBack, saving }) {
   const [fixedMapping, setFixedMapping] = useState({})
-  /** per fixed field key: 'text' | 'date' (date → sortable in the table) */
-  const [fieldTypes, setFieldTypes] = useState({})
-  // extra: { label, colIndex, dataType?: 'text'|'date' }
-  const [extraFields, setExtraFields] = useState([])
+  const [fieldTypes, setFieldTypes]     = useState({})
+  const [extraFields, setExtraFields]   = useState([])
 
   useEffect(() => {
-    // Populate fixed fields from initialMapping
     const fixed = {}
     FIXED_FIELDS.forEach(f => {
       fixed[f.key] = initialMapping[f.key] !== undefined ? initialMapping[f.key] : null
@@ -29,23 +38,20 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
 
     const ft = {}
     FIXED_FIELDS.forEach(field => {
-      ft[field.key] = initialMapping.fieldTypes?.[field.key] === 'date' ? 'date' : 'text'
+      ft[field.key] = migrateType(initialMapping.fieldTypes?.[field.key])
     })
     setFieldTypes(ft)
 
-    // Find already-mapped column indices for fixed fields
     const usedIndices = new Set(Object.values(fixed).filter(v => v !== null))
 
-    // Pre-populate extra fields from initialMapping.extra if present
     if (initialMapping.extra && Array.isArray(initialMapping.extra)) {
       setExtraFields(
         initialMapping.extra.map(e => ({
           ...e,
-          dataType: e.dataType === 'date' ? 'date' : 'text',
+          dataType: migrateType(e.dataType),
         }))
       )
     } else {
-      // Auto-suggest unmapped columns as extra fields
       const suggestions = headers
         .map((h, i) => ({ label: h, colIndex: i }))
         .filter(({ colIndex }) => !usedIndices.has(colIndex))
@@ -58,11 +64,17 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
   }
 
   const setExtra = (index, field, value) => {
-    setExtraFields(prev => prev.map((e, i) => i === index ? { ...e, [field]: field === 'colIndex' ? (value === '' ? null : Number(value)) : value } : e))
+    setExtraFields(prev =>
+      prev.map((e, i) =>
+        i === index
+          ? { ...e, [field]: field === 'colIndex' ? (value === '' ? null : Number(value)) : value }
+          : e
+      )
+    )
   }
 
-  const setFieldType = (key, value) => {
-    setFieldTypes(prev => ({ ...prev, [key]: value }))
+  const setFieldType = (key, typeId) => {
+    setFieldTypes(prev => ({ ...prev, [key]: typeId }))
   }
 
   const addExtra = () => {
@@ -76,7 +88,7 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
   const handleConfirm = () => {
     const fieldTypesOut = {}
     FIXED_FIELDS.forEach(f => {
-      fieldTypesOut[f.key] = fieldTypes[f.key] === 'date' ? 'date' : 'text'
+      fieldTypesOut[f.key] = fieldTypes[f.key] || 'text'
     })
     const finalMapping = {
       ...fixedMapping,
@@ -86,7 +98,7 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
         .map(e => ({
           label: e.label.trim(),
           colIndex: e.colIndex,
-          dataType: e.dataType === 'date' ? 'date' : 'text',
+          dataType: e.dataType || 'text',
         })),
     }
     onConfirm(finalMapping)
@@ -111,18 +123,37 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
       <div style={{
         background: '#fff', borderRadius: '16px',
         boxShadow: '0 4px 24px rgba(79,70,229,0.10)',
-        padding: '36px 40px', width: '100%', maxWidth: '560px'
+        padding: '36px 40px', width: '100%', maxWidth: '600px'
       }}>
         <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
         <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111', margin: '20px 0 4px' }}>Map your columns</h2>
-        <p style={{ fontSize: '13px', color: '#888', margin: '0 0 24px' }}>
-          We detected {headers.length} columns. Match them to Rythm fields. Columns marked "Not mapped" will be left blank.
+        <p style={{ fontSize: '13px', color: '#888', margin: '0 0 4px' }}>
+          We detected {headers.length} columns. Match them to Rythm fields.
+        </p>
+        <p style={{ fontSize: '12px', color: '#aaa', margin: '0 0 24px' }}>
+          Set the <strong>data type</strong> so Rythm knows how to sort and filter each column.
+          <br />
+          <span style={{ color: '#4f46e5' }}>Number / Date / Datetime</span> → sortable + filterable
+          &nbsp;·&nbsp;
+          <span style={{ color: '#7c3aed' }}>Text / Status / Boolean</span> → filterable only
+          &nbsp;·&nbsp;
+          <span style={{ color: '#888' }}>Name</span> → display only
         </p>
 
         {/* Fixed fields */}
         <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 12px' }}>Standard Fields</p>
+
+        {/* Column headers */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', padding: '0 0 4px', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ width: '130px', flexShrink: 0 }}>
+            <span style={{ fontSize: '10px', fontWeight: '700', color: '#ccc', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Field</span>
+          </div>
+          <span style={{ flex: 1, fontSize: '10px', fontWeight: '700', color: '#ccc', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Sheet Column</span>
+          <span style={{ width: '120px', flexShrink: 0, fontSize: '10px', fontWeight: '700', color: '#ccc', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Data Type</span>
+        </div>
+
         {FIXED_FIELDS.map(({ key, label }) => (
-          <div key={key} style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div key={key} style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <div style={{ width: '130px', flexShrink: 0 }}>
               <p style={{ fontSize: '12px', fontWeight: '700', color: '#555', margin: 0, textTransform: 'uppercase', letterSpacing: '0.4px' }}>{label}</p>
             </div>
@@ -136,15 +167,14 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
                 <option key={i} value={i}>{h || `Column ${i + 1}`}</option>
               ))}
             </select>
-            <select
-              value={fieldTypes[key] === 'date' ? 'date' : 'text'}
-              onChange={e => setFieldType(key, e.target.value)}
-              title="Date columns can be sorted in the table"
-              style={{ width: '100px', flexShrink: 0, padding: '8px 10px', fontSize: '12px', border: '1.5px solid #ddd', borderRadius: '8px', outline: 'none', background: '#fff', color: '#333', cursor: 'pointer' }}
-            >
-              <option value="text">Text</option>
-              <option value="date">Date</option>
-            </select>
+
+            {/* ← replaces the old text/date <select> */}
+            <div style={{ width: '120px', flexShrink: 0 }}>
+              <ColumnTypeSelector
+                value={fieldTypes[key] || 'text'}
+                onChange={typeId => setFieldType(key, typeId)}
+              />
+            </div>
           </div>
         ))}
 
@@ -183,20 +213,20 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
                   <option key={idx} value={idx}>{h || `Column ${idx + 1}`}</option>
                 ))}
               </select>
-              <select
-                value={extra.dataType === 'date' ? 'date' : 'text'}
-                onChange={e => setExtra(i, 'dataType', e.target.value)}
-                title="Date columns can be sorted in the table"
-                style={{ width: '100px', flexShrink: 0, padding: '8px 10px', fontSize: '12px', border: '1.5px solid #ddd', borderRadius: '8px', outline: 'none', background: '#fff', color: '#333', cursor: 'pointer' }}
-              >
-                <option value="text">Text</option>
-                <option value="date">Date</option>
-              </select>
+
+              {/* ← replaces the old text/date <select> for extra fields */}
+              <div style={{ width: '120px', flexShrink: 0 }}>
+                <ColumnTypeSelector
+                  value={extra.dataType || 'text'}
+                  onChange={typeId => setExtra(i, 'dataType', typeId)}
+                />
+              </div>
+
               <button
                 onClick={() => removeExtra(i)}
                 style={{ background: 'none', border: 'none', color: '#ccc', fontSize: '18px', cursor: 'pointer', flexShrink: 0, lineHeight: 1 }}
               >
-                x
+                ×
               </button>
             </div>
           ))}
