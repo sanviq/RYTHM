@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import ColumnTypeSelector, { COLUMN_TYPES } from './ColumnTypeSelector'
-import '../styles/columnTypes.css'
+import './columnTypes.css'
 
 const FIXED_FIELDS = [
   { key: 'first_name',   label: 'First Name' },

@@ -88,17 +88,30 @@ function buildColumns(columnMapping) {
     { key: 'location',     label: 'Location' },
   ]
   const fieldTypes = columnMapping.fieldTypes || {}
+  // typeSource distinguishes "the user picked text" from "nothing was ever saved".
+  // Mappings created before column types shipped have no fieldTypes at all; those
+  // get inferred from the data later (see inferDataType) instead of silently
+  // defaulting to text, which would drop the sort controls with no error.
   fixedFields.forEach(({ key, label }) => {
     const idx = columnMapping[key]
     if (idx !== null && idx !== undefined) {
-      cols.push({ key, label, colIndex: idx, type: 'fixed', dataType: fieldTypes[key] || 'text' })
+      const stored = fieldTypes[key]
+      cols.push({
+        key, label, colIndex: idx, type: 'fixed',
+        dataType: stored || 'text',
+        typeSource: stored ? 'stored' : 'default',
+      })
     }
   })
   if (columnMapping.extra && Array.isArray(columnMapping.extra)) {
     columnMapping.extra.forEach((e) => {
       const { label, colIndex } = e
       if (colIndex !== null && colIndex !== undefined && label) {
-        cols.push({ key: `extra_${label}`, label, colIndex, type: 'extra', dataType: e.dataType || 'text' })
+        cols.push({
+          key: `extra_${label}`, label, colIndex, type: 'extra',
+          dataType: e.dataType || 'text',
+          typeSource: e.dataType ? 'stored' : 'default',
+        })
       }
     })
   }
@@ -147,6 +160,30 @@ function parseNumber(raw) {
   if (raw == null) return null
   const n = parseFloat(String(raw).replace(/[^0-9.\-]/g, ''))
   return Number.isNaN(n) ? null : n
+}
+
+// Infers a column's type from its actual values, for mappings saved before
+// column types existed. Numbers are tested first and separately: parseSheetDate
+// reads a bare number as an Excel serial date, so an ID column would otherwise
+// be classified as a date and sort nonsensically.
+const NUMERIC_RE = /^-?\d[\d,]*(\.\d+)?$/
+const INFER_SAMPLE_SIZE = 60
+const INFER_CONFIDENCE = 0.8
+
+function inferDataType(contacts, col) {
+  let total = 0, numeric = 0, dated = 0
+  for (const c of contacts) {
+    if (total >= INFER_SAMPLE_SIZE) break
+    const raw = String(getCellValue(c, col) ?? '').trim()
+    if (!raw) continue
+    total++
+    if (NUMERIC_RE.test(raw)) { numeric++; continue }
+    if (parseSheetDate(raw) !== null) dated++
+  }
+  if (total === 0) return 'text'
+  if (numeric / total >= INFER_CONFIDENCE) return 'number'
+  if (dated / total >= INFER_CONFIDENCE) return 'date'
+  return 'text'
 }
 
 function uniqueValuesForColumn(contacts, col) {
@@ -223,8 +260,26 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const settingsRef = useRef(null)
 
   const userName = session.user.user_metadata?.full_name || session.user.email
-  const columnMapping = normalizeColumnMapping(activeSheet.column_mapping)
-  const dynCols = buildColumns(columnMapping)
+  // These must be memoized: dynCols is a dependency of the uniqueOptionsByCol and
+  // filtered memos below. Rebuilding the array on every render gave it a new
+  // identity each time, so those memos never hit and every render recomputed
+  // unique values across all rows for all columns — O(rows x columns) per
+  // keystroke, which is what made filtering feel broken rather than merely slow.
+  const columnMapping = useMemo(
+    () => normalizeColumnMapping(activeSheet.column_mapping),
+    [activeSheet.column_mapping]
+  )
+  const baseCols = useMemo(() => buildColumns(columnMapping), [columnMapping])
+
+  // Fill in types for columns whose mapping predates the column-type feature.
+  // Costs one pass over a sample of rows, and only when something is untyped.
+  const dynCols = useMemo(() => {
+    if (!contacts.length) return baseCols
+    if (baseCols.every(c => c.typeSource === 'stored')) return baseCols
+    return baseCols.map(c =>
+      c.typeSource === 'stored' ? c : { ...c, dataType: inferDataType(contacts, c) }
+    )
+  }, [baseCols, contacts])
 
   // ── Load contacts (cache → fetch) ──────────────────────────────────────────
   useEffect(() => {
@@ -637,83 +692,108 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Early returns ──────────────────────────────────────────────────────────
   if (remapping) return <ColumnMapper headers={remapHeaders} initialMapping={remapMapping} onConfirm={handleRemapConfirm} onBack={() => setRemapping(false)} saving={remapSaving} />
 
+  // Skeleton mirrors the real layout so the page keeps its shape while the
+  // Sheets fetch is in flight, instead of flashing an empty screen.
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontSize: '16px', color: '#666', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
-      Loading contacts...
+    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+      <div className="app-header">
+        <div className="skeleton" style={{ width: '132px', height: '20px' }} />
+        <div style={{ flex: 1 }} />
+        <div className="skeleton" style={{ width: '96px', height: '32px', borderRadius: 'var(--r-md)' }} />
+      </div>
+      <div style={{ padding: 'var(--s-5)', display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
+        <div className="skeleton" style={{ width: 'min(340px, 100%)', height: '38px', borderRadius: 'var(--r-md)' }} />
+        <div className="card" style={{ padding: 'var(--s-2)', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="skeleton skeleton-row" style={{ opacity: 1 - i * 0.09 }} />
+          ))}
+        </div>
+      </div>
+      <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }} role="status">
+        Loading contacts
+      </span>
     </div>
   )
 
   if (tokenError) return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', gap: '16px' }}>
-      <p style={{ fontSize: '15px', color: '#666' }}>Your session expired. Please sign in again.</p>
-      <button onClick={() => supabase.auth.signOut()} style={{ padding: '10px 24px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>Sign Out</button>
+    <div className="empty-state" style={{ height: '100vh' }}>
+      <h3>Your session expired</h3>
+      <p>Google sign-ins expire periodically. Sign in again to reconnect your sheets.</p>
+      <button className="btn btn-primary" onClick={() => supabase.auth.signOut()}>Sign out</button>
     </div>
   )
 
   // ── Nav ────────────────────────────────────────────────────────────────────
   const nav = (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '56px', background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 100, width: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <span style={{ fontSize: '18px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
+    <div className="app-header">
+      <span style={{ fontSize: 'var(--t-lg)', fontWeight: 800, letterSpacing: '2px', color: 'var(--accent)' }}>RYTHM</span>
 
-        <div ref={sheetDropRef} style={{ position: 'relative' }}>
-          <button onClick={() => { setSheetDropOpen(p => !p); setSettingsOpen(false) }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', fontSize: '13px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '8px', background: sheetDropOpen ? '#ede9fe' : '#fff', color: sheetDropOpen ? '#4f46e5' : '#333', cursor: 'pointer', outline: 'none' }}>
-            {activeSheet.sheet_name}
-            <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </button>
-          {sheetDropOpen && (
-            <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '200px', overflow: 'hidden', zIndex: 200 }}>
-              {sheets.map(s => (
-                <button key={s.id} onClick={() => { onSwitchSheet(s); setSheetDropOpen(false) }}
-                  style={{ width: '100%', textAlign: 'left', padding: '10px 14px', fontSize: '13px', fontWeight: s.id === activeSheet.id ? '700' : '500', background: s.id === activeSheet.id ? '#f5f3ff' : '#fff', color: s.id === activeSheet.id ? '#4f46e5' : '#333', border: 'none', cursor: 'pointer', display: 'block', borderBottom: '1px solid #f5f5f5' }}>
-                  {s.sheet_name}{s.id === activeSheet.id && <span style={{ fontSize: '11px', color: '#a5b4fc', marginLeft: '8px' }}>Active</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <span style={{ fontSize: '11px', background: '#ede9fe', padding: '3px 10px', borderRadius: '20px', color: '#4f46e5', fontWeight: '600' }}>
-          {contacts.length.toLocaleString()}
-        </span>
-
-        <button onClick={handleRefresh} title="Refresh from Google Sheet"
-          style={{ fontSize: '12px', fontWeight: '600', color: cacheHit === 'cache' ? '#4f46e5' : cacheHit === 'live' ? '#16a34a' : '#aaa', background: 'none', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}>
-          {cacheHit === 'cache' ? 'Cached' : cacheHit === 'live' ? 'Live · Refresh' : 'Refresh'}
+      <div ref={sheetDropRef} style={{ position: 'relative' }}>
+        <button
+          className="btn btn-secondary btn-sm"
+          aria-haspopup="menu" aria-expanded={sheetDropOpen}
+          onClick={() => { setSheetDropOpen(p => !p); setSettingsOpen(false) }}
+          style={sheetDropOpen ? { background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent-border)' } : undefined}>
+          {activeSheet.sheet_name}
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="none" aria-hidden><path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
+        {sheetDropOpen && (
+          <div className="menu" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, minWidth: '220px', zIndex: 200 }}>
+            {sheets.map(s => (
+              <button key={s.id} role="menuitem" className="menu-item"
+                onClick={() => { onSwitchSheet(s); setSheetDropOpen(false) }}
+                style={s.id === activeSheet.id ? { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 700 } : undefined}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sheet_name}</span>
+                {s.id === activeSheet.id && <span className="badge badge-accent">Active</span>}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#4f46e5', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
-          {userName.charAt(0).toUpperCase()}
-        </div>
-        <span style={{ fontSize: '13px', color: '#333', fontWeight: '500', maxWidth: isMobile ? '70px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {isMobile ? userName.split(' ')[0] : userName}
-        </span>
-        <div ref={settingsRef} style={{ position: 'relative' }}>
-          <button onClick={() => { setSettingsOpen(p => !p); setSheetDropOpen(false) }}
-            style={{ padding: '5px 10px', fontSize: '12px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '6px', background: settingsOpen ? '#ede9fe' : '#fff', color: settingsOpen ? '#4f46e5' : '#666', cursor: 'pointer', outline: 'none' }}>
-            Settings
-          </button>
-          {settingsOpen && (
-            <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '180px', overflow: 'hidden', zIndex: 200 }}>
-              {[
-                { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
-                { label: 'Re-map Columns', action: handleStartRemap },
-                { label: deleting ? 'Deleting...' : 'Delete This Sheet', action: handleDeleteSheet, danger: true },
-                { label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
-              ].map(({ label, action, danger }) => (
-                <button key={label} onClick={action}
-                  style={{ width: '100%', textAlign: 'left', padding: '11px 16px', fontSize: '13px', fontWeight: '500', background: '#fff', color: danger ? '#dc2626' : '#333', border: 'none', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', display: 'block' }}
-                  onMouseEnter={e => e.currentTarget.style.background = danger ? '#fef2f2' : '#f9f8ff'}
-                  onMouseLeave={e => e.currentTarget.style.background = '#fff'}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      <span className="badge badge-accent">{contacts.length.toLocaleString()}</span>
+
+      <button className="btn btn-ghost btn-sm" onClick={handleRefresh} title="Refresh from Google Sheet"
+        style={{ color: cacheHit === 'live' ? 'var(--success)' : cacheHit === 'cache' ? 'var(--accent)' : 'var(--text-subtle)' }}>
+        {cacheHit === 'cache' ? 'Cached' : cacheHit === 'live' ? 'Live · Refresh' : 'Refresh'}
+      </button>
+
+      <div style={{ flex: 1 }} />
+
+      <div style={{
+        width: '28px', height: '28px', flexShrink: 0,
+        display: 'grid', placeItems: 'center',
+        borderRadius: 'var(--r-full)',
+        background: 'var(--accent)', color: 'var(--text-inverse)',
+        fontSize: 'var(--t-sm)', fontWeight: 700,
+      }}>
+        {userName.charAt(0).toUpperCase()}
+      </div>
+      <span style={{ fontSize: 'var(--t-base)', color: 'var(--text-muted)', maxWidth: isMobile ? '70px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {isMobile ? userName.split(' ')[0] : userName}
+      </span>
+
+      <div ref={settingsRef} style={{ position: 'relative' }}>
+        <button className="btn btn-secondary btn-sm"
+          aria-haspopup="menu" aria-expanded={settingsOpen}
+          onClick={() => { setSettingsOpen(p => !p); setSheetDropOpen(false) }}
+          style={settingsOpen ? { background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent-border)' } : undefined}>
+          Settings
+        </button>
+        {settingsOpen && (
+          <div className="menu" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '200px', zIndex: 200 }}>
+            {[
+              { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
+              { label: 'Re-map Columns', action: handleStartRemap },
+              { label: deleting ? 'Deleting…' : 'Delete This Sheet', action: handleDeleteSheet, danger: true },
+              { label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
+            ].map(({ label, action, danger }) => (
+              <button key={label} role="menuitem" className="menu-item" data-danger={danger || undefined} onClick={action}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -752,16 +832,15 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
+      {/* Row hover/selection and card hover now come from theme.css. The old
+          rules here hardcoded light-mode hex with !important, which outranked
+          the tokens and left dark mode with white-on-white rows. */}
       <style>{`
-        .contact-row:hover { background: #f9f8ff !important; }
-        .contact-row.active { background: #ede9fe !important; }
-        .contact-card:hover { border-color: #a5b4fc !important; }
-        * { box-sizing: border-box; }
         @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
       `}</style>
 
-      <div style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', minHeight: '100vh', background: 'linear-gradient(135deg, #ece9f7 0%, #e8f0fe 100%)', width: '100%', overflowX: 'hidden' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', width: '100%', overflowX: 'hidden' }}>
         {nav}
 
         {sheetError && (
@@ -907,9 +986,9 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
               <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'visible' }}>
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
+                  <table className="data-table" style={{ tableLayout: 'auto' }}>
                     <thead>
-                      <tr style={{ background: '#faf9ff', borderBottom: '2px solid #ede9fe' }}>
+                      <tr>
                         <th style={th}>Name</th>
                         {dynCols.map(col => {
                           const hasFilter = (columnFilters[col.key] || []).length > 0
@@ -945,21 +1024,24 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                     </thead>
                     <tbody>
                       {displayRows.map((c, i) => (
-                        <tr key={i} className={`contact-row${selected === i ? ' active' : ''}`}
-                          style={{ borderBottom: '1px solid #f5f5f5', cursor: 'pointer', background: 'transparent' }}
+                        <tr key={i} className="contact-row" data-selected={selected === i || undefined}
                           onClick={() => { setSelected(selected === i ? null : i); setEditing(false); setEditData(null) }}>
-                          <td style={{ ...td, fontWeight: '600', color: '#4f46e5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: '#c7d2fe', maxWidth: '140px' }}>{c.full_name || '—'}</td>
+                          <td style={{ ...td, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px' }}>{c.full_name || '—'}</td>
                           {dynCols.map(col => {
                             const val = getCellValue(c, col)
                             return (
-                              <td key={col.key} style={{ ...td, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '110px' }}>
+                              <td key={col.key} style={{ ...td, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
                                 {BADGE_KEYS.has(col.key) && val
-                                  ? <span style={{ padding: '2px 7px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', display: 'inline-block', ...statusStyle(val) }}>{val}</span>
-                                  : <span style={{ color: '#555', fontSize: '12px' }}>{val || '—'}</span>}
+                                  ? <span className="badge" style={statusStyle(val)}>{val}</span>
+                                  : <span style={{ color: val ? 'var(--text-muted)' : 'var(--text-subtle)' }}>{val || '—'}</span>}
                               </td>
                             )
                           })}
-                          <td style={{ ...td, textAlign: 'center', fontSize: '14px' }}>{c.notes ? <span style={{ color: '#4f46e5' }}>●</span> : <span style={{ color: '#ddd' }}>○</span>}</td>
+                          <td style={{ ...td, textAlign: 'center' }}>
+                            {c.notes
+                              ? <span title="Has notes" style={{ color: 'var(--accent)' }}>●</span>
+                              : <span title="No notes" style={{ color: 'var(--border-strong)' }}>○</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -993,5 +1075,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   )
 }
 
-const th = { padding: '9px 10px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px', overflow: 'visible', whiteSpace: 'nowrap' }
-const td = { padding: '9px 10px', fontSize: '12px' }
+// Padding, type and colour now come from .data-table in theme.css. These keep
+// only what the class deliberately doesn't set: th must not clip, so the
+// filter popover can escape the cell.
+const th = { overflow: 'visible' }
+const td = {}
