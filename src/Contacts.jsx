@@ -49,7 +49,9 @@ async function saveToCache(sheetId, data) {
       req.onsuccess = () => resolve()
       req.onerror = () => resolve()
     })
-  } catch {}
+  } catch {
+    // Cache writes are best-effort: a failure here must not break loading.
+  }
 }
 
 async function clearCache(sheetId) {
@@ -60,7 +62,9 @@ async function clearCache(sheetId) {
       req.onsuccess = () => resolve()
       req.onerror = () => resolve()
     })
-  } catch {}
+  } catch {
+    // Same: eviction failing is not worth surfacing to the user.
+  }
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -135,7 +139,7 @@ function parseSheetDate(raw) {
   if (!s) return null
   const t = Date.parse(s)
   if (!Number.isNaN(t)) return t
-  const m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/)
+  const m = s.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/)
   if (m) {
     let a = +m[1], b = +m[2], y = +m[3]
     if (String(m[3]).length === 2) y += y >= 70 ? 1900 : 2000
@@ -158,7 +162,7 @@ function parseSheetDate(raw) {
 // ── CHANGE 2: parseNumber helper for number-typed columns ──────────────────
 function parseNumber(raw) {
   if (raw == null) return null
-  const n = parseFloat(String(raw).replace(/[^0-9.\-]/g, ''))
+  const n = parseFloat(String(raw).replace(/[^0-9.-]/g, ''))
   return Number.isNaN(n) ? null : n
 }
 
@@ -277,7 +281,6 @@ function useIncremental(totalRows, enabled) {
   // synchronously and cascade an extra render.
   const [state, setState] = useState(() => ({ total: totalRows, count: enabled ? Math.min(totalRows, MOBILE_PAGE) : totalRows }))
   const count = state.total === totalRows ? state.count : Math.min(totalRows, MOBILE_PAGE)
-  const setCount = (fn) => setState(prev => ({ total: totalRows, count: fn(prev.total === totalRows ? prev.count : Math.min(totalRows, MOBILE_PAGE)) }))
 
   useEffect(() => {
     if (!enabled) return
@@ -285,7 +288,14 @@ function useIncremental(totalRows, enabled) {
     const check = () => {
       frame = 0
       const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600
-      if (nearBottom) setCount(c => (c >= totalRows ? c : Math.min(totalRows, c + MOBILE_PAGE)))
+      if (!nearBottom) return
+      // Updated inline rather than through a helper closed over totalRows:
+      // as a dependency the helper was correct only because totalRows happened
+      // to be in this array too, which is a stale-closure bug waiting to happen.
+      setState(prev => {
+        const base = prev.total === totalRows ? prev.count : Math.min(totalRows, MOBILE_PAGE)
+        return { total: totalRows, count: base >= totalRows ? base : Math.min(totalRows, base + MOBILE_PAGE) }
+      })
     }
     const onScroll = () => { if (!frame) frame = requestAnimationFrame(check) }
     window.addEventListener('scroll', onScroll, { passive: true })
@@ -506,8 +516,6 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     () => dynCols.filter(c => c.dataType === 'date' || c.dataType === 'datetime' || c.dataType === 'number'),
     [dynCols]
   )
-  // Keep dateColumns alias so the mobile date-sort <select> still works
-  const dateColumns = useMemo(() => dynCols.filter(c => c.dataType === 'date' || c.dataType === 'datetime'), [dynCols])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
