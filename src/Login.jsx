@@ -12,13 +12,16 @@ function GoogleMark() {
   )
 }
 
-export default function Login() {
+export default function Login({ authError = null }) {
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
+  const [localError, setLocalError] = useState(null)
+  // A failure returned on the callback URL matters more than anything raised
+  // locally, because it explains why sign-in bounced straight back to here.
+  const error = authError || localError
 
   const handleGoogleLogin = async () => {
     setBusy(true)
-    setError(null)
+    setLocalError(null)
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -33,7 +36,7 @@ export default function Login() {
     })
     if (error) {
       console.error('Login error:', error.message)
-      setError(error.message)
+      setLocalError(error.message)
       setBusy(false)
     }
     // On success the browser navigates to Google, so `busy` intentionally stays set.

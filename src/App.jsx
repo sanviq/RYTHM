@@ -16,12 +16,36 @@ export async function getFreshToken() {
   return null
 }
 
+// OAuth failures come back on the callback URL, in the query string or the hash
+// depending on the flow. Without reading them a failed sign-in just renders the
+// login screen again, which looks like an unexplained redirect loop.
+function readAuthError() {
+  if (typeof window === 'undefined') return null
+  const sources = [
+    new URLSearchParams(window.location.search),
+    new URLSearchParams(window.location.hash.replace(/^#/, '')),
+  ]
+  for (const params of sources) {
+    const code = params.get('error') || params.get('error_code')
+    if (!code) continue
+    const detail = params.get('error_description')
+    return detail ? `${code}: ${detail.replace(/\+/g, ' ')}` : code
+  }
+  return null
+}
+
 export default function App() {
   const [session, setSession] = useState(null)
   const [sheets, setSheets] = useState([])
   const [activeSheet, setActiveSheet] = useState(null)
   const [loading, setLoading] = useState(true)
   const [addingSheet, setAddingSheet] = useState(false)
+  const [authError, setAuthError] = useState(() => readAuthError())
+
+  // Strip the error off the URL so a refresh doesn't resurrect a stale message.
+  useEffect(() => {
+    if (authError) window.history.replaceState({}, '', window.location.pathname)
+  }, [authError])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -91,7 +115,7 @@ export default function App() {
     </div>
   )
 
-  if (!session) return <Login />
+  if (!session) return <Login authError={authError} />
 
   if (sheets.length === 0 || addingSheet) return (
     <SheetSetup
