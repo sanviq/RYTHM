@@ -199,13 +199,6 @@ function uniqueValuesForColumn(contacts, col) {
   return arr
 }
 
-function cellMatchesColumnFilter(c, col, selectedValues) {
-  if (!selectedValues?.length) return true
-  const raw = String(getCellValue(c, col) ?? '').trim()
-  if (raw === '') return selectedValues.includes(EMPTY_SENTINEL)
-  return selectedValues.includes(raw)
-}
-
 // ── Row virtualization ───────────────────────────────────────────────────────
 // With 15k rows the table put ~200k-400k elements in the DOM, which is well past
 // where browsers keep scrolling smooth. This renders only the rows near the
@@ -214,12 +207,23 @@ function cellMatchesColumnFilter(c, col, selectedValues) {
 //
 // It virtualizes against the *window* rather than an inner scroll container, so
 // the existing page scroll and the sticky header keep working as before.
-const ROW_HEIGHT = 44      // must match .data-table tbody tr height in theme.css
+// Read from CSS so --row-h is the single source of truth; restyling row padding
+// no longer silently desyncs the virtualizer's offset-to-index arithmetic.
+const ROW_HEIGHT_FALLBACK = 44
+function readRowHeight() {
+  if (typeof window === 'undefined') return ROW_HEIGHT_FALLBACK
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--row-h')
+  const n = parseFloat(raw)
+  return Number.isFinite(n) && n > 0 ? n : ROW_HEIGHT_FALLBACK
+}
 const OVERSCAN = 8         // rows kept beyond each edge, to hide fast scrolling
 const VIRTUALIZE_ABOVE = 100
+const OPTION_RENDER_CAP = 200   // filter-popover options rendered at once
 
 function useWindowVirtual(totalRows, enabled) {
   const anchorRef = useRef(null)
+  // Measured once on mount rather than hardcoded, so --row-h stays authoritative.
+  const [rowH] = useState(readRowHeight)
   // Start narrow when virtualizing, or the very first paint would mount every
   // row before the effect below has a chance to shrink the window.
   const [range, setRange] = useState(() => ({
@@ -237,8 +241,8 @@ function useWindowVirtual(totalRows, enabled) {
       // Spacers keep the tbody's document position fixed, so its distance above
       // the viewport is exactly how far we've scrolled into the rows.
       const scrolledPast = Math.max(0, -el.getBoundingClientRect().top)
-      const start = Math.max(0, Math.floor(scrolledPast / ROW_HEIGHT) - OVERSCAN)
-      const visible = Math.ceil(window.innerHeight / ROW_HEIGHT) + OVERSCAN * 2
+      const start = Math.max(0, Math.floor(scrolledPast / rowH) - OVERSCAN)
+      const visible = Math.ceil(window.innerHeight / rowH) + OVERSCAN * 2
       const end = Math.min(totalRows, start + visible)
       setRange(prev => (prev.start === start && prev.end === end) ? prev : { start, end })
     }
@@ -254,12 +258,47 @@ function useWindowVirtual(totalRows, enabled) {
       window.removeEventListener('resize', onScroll)
       if (frame) cancelAnimationFrame(frame)
     }
-  }, [totalRows, enabled])
+  }, [totalRows, enabled, rowH])
 
   // Derived rather than stored when disabled, so the effect never has to write
   // state just to represent "render everything".
-  if (!enabled) return { anchorRef, start: 0, end: totalRows }
-  return { anchorRef, start: range.start, end: Math.min(range.end, totalRows) }
+  if (!enabled) return { anchorRef, rowH, start: 0, end: totalRows }
+  return { anchorRef, rowH, start: range.start, end: Math.min(range.end, totalRows) }
+}
+
+// The mobile cards have variable heights, so the fixed-height windowing used by
+// the table doesn't apply. Render a page at a time and extend as the user nears
+// the bottom — same effect on the initial paint, no height arithmetic.
+const MOBILE_PAGE = 40
+
+function useIncremental(totalRows, enabled) {
+  // Keeps the row count it was built for, so a change in the filtered list is
+  // detectable during render — resetting via an effect would set state
+  // synchronously and cascade an extra render.
+  const [state, setState] = useState(() => ({ total: totalRows, count: enabled ? Math.min(totalRows, MOBILE_PAGE) : totalRows }))
+  const count = state.total === totalRows ? state.count : Math.min(totalRows, MOBILE_PAGE)
+  const setCount = (fn) => setState(prev => ({ total: totalRows, count: fn(prev.total === totalRows ? prev.count : Math.min(totalRows, MOBILE_PAGE)) }))
+
+  useEffect(() => {
+    if (!enabled) return
+    let frame = 0
+    const check = () => {
+      frame = 0
+      const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600
+      if (nearBottom) setCount(c => (c >= totalRows ? c : Math.min(totalRows, c + MOBILE_PAGE)))
+    }
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(check) }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [totalRows, enabled])
+
+
+  return enabled ? Math.min(count, totalRows) : totalRows
 }
 
 function FilterChevron({ open, active }) {
@@ -299,6 +338,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const [dragging, setDragging] = useState(false)
   const [columnFilters, setColumnFilters] = useState({})
   const [openFilterCol, setOpenFilterCol] = useState(null)
+  const [optionQuery, setOptionQuery] = useState('')
   const [filterMenuPos, setFilterMenuPos] = useState(null)
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const [filterMode, setFilterMode] = useState('all') // 'all' = AND across columns, 'any' = OR
@@ -351,6 +391,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setColumnFilters({})
     setFilterMode('all')
     setOpenFilterCol(null)
+    setOptionQuery('')
     setFilterMenuPos(null)
     setMobileFiltersOpen(false)
     setColSort(null)
@@ -411,10 +452,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
       if (sheetDropRef.current && !sheetDropRef.current.contains(e.target)) setSheetDropOpen(false)
       if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false)
       if (!e.target.closest?.('[data-col-filter]') && !e.target.closest?.('[data-col-filter-portal]')) {
-        setOpenFilterCol(null); setFilterMenuPos(null)
+        setOpenFilterCol(null); setFilterMenuPos(null); setOptionQuery('')
       }
     }
-    const closeFilter = () => { setOpenFilterCol(null); setFilterMenuPos(null) }
+    const closeFilter = () => { setOpenFilterCol(null); setFilterMenuPos(null); setOptionQuery('') }
     document.addEventListener('mousedown', handler)
     window.addEventListener('scroll', closeFilter, true)
     window.addEventListener('resize', closeFilter)
@@ -468,26 +509,44 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     // Search is deliberately outside that choice — it narrows whatever the
     // filters produced, rather than widening it.
     const matchAny = filterMode === 'any'
-    return contacts.filter(c => {
-      const matchSearch = !q ||
-        (c.full_name || '').toLowerCase().includes(q) ||
-        (c.first_name || '').toLowerCase().includes(q) ||
-        (c.organization || '').toLowerCase().includes(q) ||
-        (c.location || '').toLowerCase().includes(q)
-      if (!matchSearch) return false
 
-      const checks = []
-      const nf = columnFilters[NOTES_FILTER_KEY]
-      if (nf?.length) {
+    // Built once per filter change, not once per row. Previously every row
+    // walked all 12 columns even when a single filter was set, and membership
+    // was a linear `includes` scan; both are now proportional to the number of
+    // *active* filters, with Set lookups.
+    const active = []
+    for (const col of dynCols) {
+      const sel = columnFilters[col.key]
+      if (sel?.length) active.push({ col, set: new Set(sel) })
+    }
+    const nf = columnFilters[NOTES_FILTER_KEY]
+    const notesWants = nf?.length ? { has: nf.includes(NOTES_HAS), no: nf.includes(NOTES_NO) } : null
+    const hasFilters = active.length > 0 || notesWants !== null
+
+    return contacts.filter(c => {
+      if (q) {
+        const hit =
+          (c.full_name || '').toLowerCase().includes(q) ||
+          (c.first_name || '').toLowerCase().includes(q) ||
+          (c.organization || '').toLowerCase().includes(q) ||
+          (c.location || '').toLowerCase().includes(q)
+        if (!hit) return false
+      }
+      if (!hasFilters) return true
+
+      // 'all' bails on the first failure, 'any' on the first success.
+      if (notesWants) {
         const rowHas = !!(c.notes && String(c.notes).trim())
-        checks.push((nf.includes(NOTES_HAS) && rowHas) || (nf.includes(NOTES_NO) && !rowHas))
+        const ok = (notesWants.has && rowHas) || (notesWants.no && !rowHas)
+        if (matchAny) { if (ok) return true } else if (!ok) return false
       }
-      for (const col of dynCols) {
-        const sel = columnFilters[col.key]
-        if (sel?.length) checks.push(cellMatchesColumnFilter(c, col, sel))
+      for (const { col, set } of active) {
+        const raw = String(getCellValue(c, col) ?? '').trim()
+        const ok = raw === '' ? set.has(EMPTY_SENTINEL) : set.has(raw)
+        if (matchAny) { if (ok) return true } else if (!ok) return false
       }
-      if (checks.length === 0) return true
-      return matchAny ? checks.some(Boolean) : checks.every(Boolean)
+      // 'all' reaching here means nothing failed; 'any' means nothing matched.
+      return !matchAny
     })
   }, [contacts, search, columnFilters, dynCols, filterMode])
 
@@ -516,7 +575,9 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   // Desktop table only; the mobile card list has variable heights.
   const virtualOn = !isMobile && displayRows.length > VIRTUALIZE_ABOVE
-  const { anchorRef: tbodyRef, start: vStart, end: vEnd } = useWindowVirtual(displayRows.length, virtualOn)
+  const { anchorRef: tbodyRef, rowH: vRowH, start: vStart, end: vEnd } = useWindowVirtual(displayRows.length, virtualOn)
+  const mobileOn = isMobile && displayRows.length > MOBILE_PAGE
+  const mobileCount = useIncremental(displayRows.length, mobileOn)
 
   // ── CHANGE 6: cycleSort works for any col key (not just date) ─────────────
   const cycleSort = (colKey, dataType) => {
@@ -553,14 +614,48 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     const options = uniqueOptionsByCol[col.key] || []
     const sel = columnFilters[col.key] || []
     if (options.length === 0) return <p style={{ padding: '8px 14px', margin: 0, fontSize: '12px', color: 'var(--text-subtle)' }}>No values yet.</p>
+
+    // High-cardinality columns (mobile numbers, names) have as many distinct
+    // values as rows. Rendering them all mounted ~45k elements in a dropdown —
+    // slow, and unusable anyway since you cannot scan 15k checkboxes. Selected
+    // values are always shown so a filter can never be hidden by the cap.
+    const selSet = new Set(sel)
+    const q = optionQuery.trim().toLowerCase()
+    const matching = q
+      ? options.filter(o => (o === EMPTY_SENTINEL ? '(blanks)' : String(o)).toLowerCase().includes(q))
+      : options
+    const shown = matching.slice(0, OPTION_RENDER_CAP)
+    const hidden = matching.length - shown.length
+    const pinned = sel.filter(v => !shown.includes(v))
+    const visible = [...pinned, ...shown]
+
     return (
       <>
-        {options.map(opt => (
+        {options.length > OPTION_RENDER_CAP && (
+          <div style={{ padding: '8px 14px 4px' }}>
+            <input
+              className="input" type="search" value={optionQuery} autoFocus
+              placeholder={`Search ${options.length.toLocaleString()} values…`}
+              onChange={e => setOptionQuery(e.target.value)}
+              onMouseDown={e => e.stopPropagation()}
+              style={{ fontSize: '12px', padding: '6px 10px' }}
+            />
+          </div>
+        )}
+        {visible.map(opt => (
           <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '12px', color: 'var(--text)', cursor: 'pointer', userSelect: 'none' }} onMouseDown={e => e.preventDefault()}>
-            <input type="checkbox" checked={sel.includes(opt)} onChange={() => toggleColumnFilterValue(col.key, opt)} style={{ accentColor: 'var(--accent)', cursor: 'pointer' }} />
+            <input type="checkbox" checked={selSet.has(opt)} onChange={() => toggleColumnFilterValue(col.key, opt)} style={{ accentColor: 'var(--accent)', cursor: 'pointer' }} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt === EMPTY_SENTINEL ? '(Blanks)' : opt}</span>
           </label>
         ))}
+        {hidden > 0 && (
+          <p style={{ padding: '6px 14px', margin: 0, fontSize: '11px', color: 'var(--text-subtle)' }}>
+            {hidden.toLocaleString()} more — type to narrow
+          </p>
+        )}
+        {q && matching.length === 0 && (
+          <p style={{ padding: '8px 14px', margin: 0, fontSize: '12px', color: 'var(--text-subtle)' }}>No match.</p>
+        )}
         {sel.length > 0 && (
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => clearColumnFilter(col.key)}
             className="btn btn-sm" style={{ margin: 'var(--s-2) var(--s-4) var(--s-1)', color: 'var(--danger)', background: 'var(--danger-soft)', width: 'calc(100% - 28px)' }}>
@@ -772,6 +867,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Helper: open filter button ─────────────────────────────────────────────
   const openFilter = (e, key) => {
     e.stopPropagation()
+    setOptionQuery('')
     if (openFilterCol === key) { setOpenFilterCol(null); setFilterMenuPos(null); return }
     const r = e.currentTarget.getBoundingClientRect()
     setFilterMenuPos({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 288)) })
@@ -995,7 +1091,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             )}
 
             <div style={{ padding: '0 12px 100px' }}>
-              {displayRows.map((c, i) => (
+              {(mobileOn ? displayRows.slice(0, mobileCount) : displayRows).map((c, i) => (
                 <div key={i} className="contact-card" onClick={() => { setSelected(i); setEditing(false); setEditData(null) }}
                   style={{ background: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', padding: '14px 16px', marginBottom: '10px', cursor: 'pointer', transition: 'border-color 0.15s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
@@ -1142,7 +1238,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                     </thead>
                     <tbody ref={tbodyRef}>
                       {virtualOn && vStart > 0 && (
-                        <tr aria-hidden style={{ height: vStart * ROW_HEIGHT }} />
+                        <tr aria-hidden style={{ height: vStart * vRowH }} />
                       )}
                       {(virtualOn ? displayRows.slice(vStart, vEnd) : displayRows).map((c, idx) => {
                         const i = virtualOn ? vStart + idx : idx
@@ -1169,7 +1265,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                         )
                       })}
                       {virtualOn && vEnd < displayRows.length && (
-                        <tr aria-hidden style={{ height: (displayRows.length - vEnd) * ROW_HEIGHT }} />
+                        <tr aria-hidden style={{ height: (displayRows.length - vEnd) * vRowH }} />
                       )}
                     </tbody>
                   </table>

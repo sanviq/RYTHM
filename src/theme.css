@@ -59,6 +59,7 @@
 
   --ring: 0 0 0 3px rgba(79, 70, 229, .18);
   --header-h: 60px;
+  --row-h: 44px;   /* read at runtime by the table virtualizer */
 
   /* Makes the browser theme native form controls; without it inputs keep a
      white default background and dark-mode text turns invisible on top. */
@@ -241,7 +242,7 @@ input::placeholder, textarea::placeholder { color: var(--text-subtle); }
 
 /* Fixed height is load-bearing: the virtualizer converts scroll offset to a row
    index by dividing by it, so variable rows would misplace the window. */
-.data-table tbody tr { height: 44px; cursor: pointer; transition: background .12s; }
+.data-table tbody tr { height: var(--row-h); cursor: pointer; transition: background .12s; }
 .data-table tbody tr[aria-hidden] { cursor: default; }
 .data-table tbody tr[aria-hidden]:hover { background: transparent; }
 .data-table tbody tr:hover { background: var(--surface-hover); }
