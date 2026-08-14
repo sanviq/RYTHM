@@ -59,6 +59,10 @@
 
   --ring: 0 0 0 3px rgba(79, 70, 229, .18);
   --header-h: 60px;
+
+  /* Makes the browser theme native form controls; without it inputs keep a
+     white default background and dark-mode text turns invisible on top. */
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -95,6 +99,7 @@
     --shadow-md: 0 4px 12px rgba(0, 0, 0, .45);
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, .6);
     --ring: 0 0 0 3px rgba(129, 140, 248, .25);
+    color-scheme: dark;
   }
 }
 
@@ -108,6 +113,14 @@ body {
 }
 
 :where(button, input, select, textarea) { font: inherit; color: inherit; }
+
+/* Components style fields inline without setting a background, so set one here
+   rather than inheriting the user agent's white. */
+input, select, textarea {
+  background: var(--surface);
+  color: var(--text);
+}
+input::placeholder, textarea::placeholder { color: var(--text-subtle); }
 
 :where(button):focus-visible,
 :where(input, select, textarea):focus-visible,

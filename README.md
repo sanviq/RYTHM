@@ -73,7 +73,7 @@ Multiple sheets are supported. Switch between them from the nav dropdown. Each s
 
 - **Dynamic column mapping** — works with any sheet structure, not just a fixed template
 - **Extra columns** — columns beyond the standard fields appear in the contact panel and are fully editable
-- **Local caching** — contacts are cached in the browser for 6 hours, so the app loads instantly on return visits. Hit Refresh to sync from the sheet
+- **Local caching** — contacts are cached in the browser (IndexedDB) for 24 hours, so the app loads instantly on return visits. The cache is per-browser, so it does not follow you between devices. Hit Refresh to sync from the sheet
 - **Auto token refresh** — Google access tokens refresh silently in the background
 - **Responsive** — full table view on desktop, card layout on mobile
 
