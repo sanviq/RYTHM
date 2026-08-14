@@ -1,5 +1,5 @@
 -- Full Rythm schema. Run once in a fresh Supabase project (SQL Editor).
--- Supersedes add_contacts_cache_columns.sql, which only patched an existing table.
+-- This matches the live database exactly.
 
 create table if not exists public.user_sheets (
   id                uuid primary key default gen_random_uuid(),
@@ -8,10 +8,7 @@ create table if not exists public.user_sheets (
   tab_name          text not null,
   sheet_name        text not null,
   column_mapping    jsonb not null default '{}'::jsonb,
-  created_at        timestamptz not null default now(),
-  -- Cross-device snapshot cache (localStorage is per-origin, so it can't follow you).
-  contacts_cache    jsonb,
-  contacts_cache_at timestamptz
+  created_at        timestamptz not null default now()
 );
 
 -- App always filters by user_id and orders by created_at.

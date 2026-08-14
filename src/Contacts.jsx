@@ -222,7 +222,7 @@ function SortButton({ active, dir, onCycle, title }) {
     <button type="button"
       title={title || (active ? (dir === 'asc' ? 'Sorted low → high' : 'Sorted high → low') : 'Sort')}
       onClick={e => { e.stopPropagation(); onCycle() }}
-      style={{ flexShrink: 0, padding: '2px 5px', margin: 0, border: 'none', background: active ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', borderRadius: '4px', fontSize: '12px', fontWeight: '700', color: active ? '#1d4ed8' : '#94a3b8', lineHeight: 1 }}>
+      style={{ flexShrink: 0, padding: '2px 5px', margin: 0, border: 'none', background: active ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', borderRadius: '4px', fontSize: '12px', fontWeight: '700', color: active ? 'var(--info)' : 'var(--text-subtle)', lineHeight: 1 }}>
       {active ? (dir === 'asc' ? '↑' : '↓') : '⇅'}
     </button>
   )
@@ -628,7 +628,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   // ── Panel ──────────────────────────────────────────────────────────────────
   const panelHeader = (contact) => (
-    <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
       <div>
         <div style={{ width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: '800', marginBottom: '10px', ...avatarColor(contact.status) }}>
           {(contact.full_name || '?').charAt(0).toUpperCase()}
@@ -862,10 +862,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         {nav}
 
         {sheetError && (
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', justifyContent: 'space-between', flexWrap: 'wrap', padding: '12px 16px', background: 'var(--danger-soft)', borderBottom: '1px solid var(--danger)', color: '#991b1b', fontSize: '13px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', justifyContent: 'space-between', flexWrap: 'wrap', padding: '12px 16px', background: 'var(--danger-soft)', borderBottom: '1px solid var(--danger)', color: 'var(--danger)', fontSize: '13px' }}>
             <span>{sheetError}</span>
             <button type="button" onClick={() => { clearCache(activeSheet.id); loadContacts(activeSheet) }}
-              style={{ padding: '6px 14px', fontSize: '12px', fontWeight: '600', background: 'var(--surface)', color: '#991b1b', border: '1px solid var(--danger)', borderRadius: '8px', cursor: 'pointer' }}>
+              style={{ padding: '6px 14px', fontSize: '12px', fontWeight: '600', background: 'var(--surface)', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: '8px', cursor: 'pointer' }}>
               Retry
             </button>
           </div>
@@ -892,24 +892,24 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
               <div style={{ position: 'fixed', inset: 0, zIndex: 450, background: 'rgba(0,0,0,0.4)' }} onClick={() => setMobileFiltersOpen(false)}>
                 <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '78vh', background: 'var(--surface)', borderRadius: '16px 16px 0 0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
                   <div style={{ width: '40px', height: '4px', background: 'var(--border-strong)', borderRadius: '2px', margin: '10px auto 0' }} />
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px', borderBottom: '1px solid #eee' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px', borderBottom: '1px solid var(--border)' }}>
                     <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text)' }}>Filters</span>
                     <button type="button" onClick={() => setMobileFiltersOpen(false)} style={{ fontSize: '14px', fontWeight: '600', color: 'var(--accent)', border: 'none', background: 'none', cursor: 'pointer' }}>Done</button>
                   </div>
                   <div style={{ overflowY: 'auto', padding: '8px 0 24px', flex: 1 }}>
                     <div style={{ marginBottom: '16px', padding: '0 16px' }}>
                       <p style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
-                      <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>{renderNotesFilterOptions()}</div>
+                      <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '6px 0', background: 'var(--surface-2)' }}>{renderNotesFilterOptions()}</div>
                     </div>
                     {dynCols.map(col => (
                       <div key={col.key} style={{ marginBottom: '16px', padding: '0 16px' }}>
                         <p style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>{col.label}</p>
-                        <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>{renderFilterOptions(col)}</div>
+                        <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '6px 0', background: 'var(--surface-2)' }}>{renderFilterOptions(col)}</div>
                       </div>
                     ))}
                   </div>
                   {hasActiveColumnFilters && (
-                    <div style={{ padding: '12px 16px', borderTop: '1px solid #eee' }}>
+                    <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
                       <button type="button" onClick={clearAllColumnFilters}
                         style={{ width: '100%', padding: '12px', fontSize: '14px', fontWeight: '600', color: 'var(--danger)', background: 'var(--danger-soft)', border: '1px solid var(--danger)', borderRadius: '10px', cursor: 'pointer' }}>
                         Clear all filters
@@ -1084,7 +1084,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         )}
 
         {saveMsg && (
-          <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: '#166534', color: 'var(--text-inverse)', padding: '12px 24px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 999, animation: 'slideUp 0.2s ease' }}>
+          <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: 'var(--success)', color: 'var(--text-inverse)', padding: '12px 24px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 999, animation: 'slideUp 0.2s ease' }}>
             Saved to Google Sheet
           </div>
         )}

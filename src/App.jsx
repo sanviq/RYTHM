@@ -110,7 +110,7 @@ export default function App() {
   }
 
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', fontSize: '15px', color: '#666' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', fontSize: '15px', color: 'var(--text-muted)' }}>
       Loading...
     </div>
   )

@@ -60,11 +60,11 @@ export default function SheetSetup({ session, onSheetSaved, onCancel }) {
 
   const inputStyle = {
     width: '100%', padding: '10px 14px', fontSize: '14px',
-    border: '1px solid #ddd', borderRadius: '10px', outline: 'none',
-    color: '#333', boxSizing: 'border-box', marginTop: '6px'
+    border: '1px solid var(--border-strong)', borderRadius: '10px', outline: 'none',
+    color: 'var(--text)', boxSizing: 'border-box', marginTop: '6px'
   }
   const labelStyle = {
-    fontSize: '12px', fontWeight: '700', color: '#555',
+    fontSize: '12px', fontWeight: '700', color: 'var(--text-muted)',
     textTransform: 'uppercase', letterSpacing: '0.4px'
   }
 
@@ -83,19 +83,19 @@ export default function SheetSetup({ session, onSheetSaved, onCancel }) {
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #ece9f7 0%, #e8f0fe 100%)',
+      background: 'var(--bg)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
       padding: '40px 16px'
     }}>
       <div style={{
-        background: '#fff', borderRadius: '16px',
+        background: 'var(--surface)', borderRadius: '16px',
         boxShadow: '0 4px 24px rgba(79,70,229,0.10)',
         padding: '36px 40px', width: '100%', maxWidth: '480px'
       }}>
-        <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
-        <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111', margin: '20px 0 4px' }}>Connect a Google Sheet</h2>
-        <p style={{ fontSize: '13px', color: '#888', margin: '0 0 28px' }}>
+        <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: 'var(--accent)' }}>RYTHM</span>
+        <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text)', margin: '20px 0 4px' }}>Connect a Google Sheet</h2>
+        <p style={{ fontSize: '13px', color: 'var(--text-subtle)', margin: '0 0 28px' }}>
           Paste your sheet URL, enter the tab name, and give this sheet a label.
         </p>
 
@@ -110,24 +110,24 @@ export default function SheetSetup({ session, onSheetSaved, onCancel }) {
         <div style={{ marginBottom: '24px' }}>
           <label style={labelStyle}>Tab Name</label>
           <input type="text" placeholder='e.g. contacts' value={tabName} onChange={e => setTabName(e.target.value)} style={inputStyle} />
-          <p style={{ fontSize: '11px', color: '#aaa', margin: '6px 0 0' }}>
+          <p style={{ fontSize: '11px', color: 'var(--text-subtle)', margin: '6px 0 0' }}>
             The exact name of the sheet tab at the bottom of your spreadsheet.
           </p>
         </div>
 
         {error && (
-          <p style={{ fontSize: '13px', color: '#dc2626', marginBottom: '16px', background: '#fef2f2', padding: '10px 14px', borderRadius: '8px', border: '1px solid #fca5a5' }}>
+          <p style={{ fontSize: '13px', color: 'var(--danger)', marginBottom: '16px', background: 'var(--danger-soft)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--danger)' }}>
             {error}
           </p>
         )}
 
         <div style={{ display: 'flex', gap: '10px' }}>
           {onCancel && (
-            <button onClick={onCancel} style={{ flex: 1, padding: '12px', fontSize: '14px', fontWeight: '600', background: '#f5f5f5', color: '#555', border: '1px solid #ddd', borderRadius: '10px', cursor: 'pointer' }}>
+            <button onClick={onCancel} style={{ flex: 1, padding: '12px', fontSize: '14px', fontWeight: '600', background: 'var(--surface-hover)', color: 'var(--text-muted)', border: '1px solid var(--border-strong)', borderRadius: '10px', cursor: 'pointer' }}>
               Back
             </button>
           )}
-          <button onClick={handleNext} disabled={loading} style={{ flex: 2, padding: '12px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
+          <button onClick={handleNext} disabled={loading} style={{ flex: 2, padding: '12px', fontSize: '14px', fontWeight: '600', background: 'var(--accent)', color: 'var(--text-inverse)', border: 'none', borderRadius: '10px', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
             {loading ? 'Reading sheet...' : 'Next: Map Columns'}
           </button>
         </div>
