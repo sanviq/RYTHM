@@ -692,16 +692,34 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Early returns ──────────────────────────────────────────────────────────
   if (remapping) return <ColumnMapper headers={remapHeaders} initialMapping={remapMapping} onConfirm={handleRemapConfirm} onBack={() => setRemapping(false)} saving={remapSaving} />
 
+  // Skeleton mirrors the real layout so the page keeps its shape while the
+  // Sheets fetch is in flight, instead of flashing an empty screen.
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontSize: '16px', color: '#666', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
-      Loading contacts...
+    <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
+      <div className="app-header">
+        <div className="skeleton" style={{ width: '132px', height: '20px' }} />
+        <div style={{ flex: 1 }} />
+        <div className="skeleton" style={{ width: '96px', height: '32px', borderRadius: 'var(--r-md)' }} />
+      </div>
+      <div style={{ padding: 'var(--s-5)', display: 'flex', flexDirection: 'column', gap: 'var(--s-3)' }}>
+        <div className="skeleton" style={{ width: 'min(340px, 100%)', height: '38px', borderRadius: 'var(--r-md)' }} />
+        <div className="card" style={{ padding: 'var(--s-2)', display: 'flex', flexDirection: 'column', gap: 'var(--s-2)' }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="skeleton skeleton-row" style={{ opacity: 1 - i * 0.09 }} />
+          ))}
+        </div>
+      </div>
+      <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }} role="status">
+        Loading contacts
+      </span>
     </div>
   )
 
   if (tokenError) return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', gap: '16px' }}>
-      <p style={{ fontSize: '15px', color: '#666' }}>Your session expired. Please sign in again.</p>
-      <button onClick={() => supabase.auth.signOut()} style={{ padding: '10px 24px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>Sign Out</button>
+    <div className="empty-state" style={{ height: '100vh' }}>
+      <h3>Your session expired</h3>
+      <p>Google sign-ins expire periodically. Sign in again to reconnect your sheets.</p>
+      <button className="btn btn-primary" onClick={() => supabase.auth.signOut()}>Sign out</button>
     </div>
   )
 
