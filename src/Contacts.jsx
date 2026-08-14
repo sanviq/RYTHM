@@ -245,6 +245,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const [openFilterCol, setOpenFilterCol] = useState(null)
   const [filterMenuPos, setFilterMenuPos] = useState(null)
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
+  const [filterMode, setFilterMode] = useState('all') // 'all' = AND across columns, 'any' = OR
   const [colSort, setColSort] = useState(null) // { key, dir, dataType } — replaces dateSort
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [sheetDropOpen, setSheetDropOpen] = useState(false)
@@ -292,6 +293,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setSheetError(null)
     setSearch('')
     setColumnFilters({})
+    setFilterMode('all')
     setOpenFilterCol(null)
     setFilterMenuPos(null)
     setMobileFiltersOpen(false)
@@ -404,6 +406,12 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
+    // Values within one column always OR together (picking HOT and WARM means
+    // either). filterMode decides how separate columns combine: 'all' requires
+    // every filtered column to match, 'any' accepts a row matching just one.
+    // Search is deliberately outside that choice — it narrows whatever the
+    // filters produced, rather than widening it.
+    const matchAny = filterMode === 'any'
     return contacts.filter(c => {
       const matchSearch = !q ||
         (c.full_name || '').toLowerCase().includes(q) ||
@@ -411,18 +419,21 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         (c.organization || '').toLowerCase().includes(q) ||
         (c.location || '').toLowerCase().includes(q)
       if (!matchSearch) return false
+
+      const checks = []
       const nf = columnFilters[NOTES_FILTER_KEY]
       if (nf?.length) {
         const rowHas = !!(c.notes && String(c.notes).trim())
-        if (!(nf.includes(NOTES_HAS) && rowHas) && !(nf.includes(NOTES_NO) && !rowHas)) return false
+        checks.push((nf.includes(NOTES_HAS) && rowHas) || (nf.includes(NOTES_NO) && !rowHas))
       }
       for (const col of dynCols) {
         const sel = columnFilters[col.key]
-        if (sel?.length && !cellMatchesColumnFilter(c, col, sel)) return false
+        if (sel?.length) checks.push(cellMatchesColumnFilter(c, col, sel))
       }
-      return true
+      if (checks.length === 0) return true
+      return matchAny ? checks.some(Boolean) : checks.every(Boolean)
     })
-  }, [contacts, search, columnFilters, dynCols])
+  }, [contacts, search, columnFilters, dynCols, filterMode])
 
   // ── CHANGE 5: displayRows sorts by date OR number depending on dataType ────
   const displayRows = useMemo(() => {
@@ -997,12 +1008,38 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
               </div>
 
               {(search || hasActiveColumnFilters || colSort) && (
-                <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                  {displayRows.length.toLocaleString()} shown
-                  {search && ` · "${search}"`}
-                  {hasActiveColumnFilters && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`}
-                  {colSort && ` · ${dynCols.find(c => c.key === colSort.key)?.label} ${colSort.dir === 'asc' ? (colSort.dataType === 'number' ? 'low → high' : 'oldest first') : (colSort.dataType === 'number' ? 'high → low' : 'newest first')}`}
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--s-3)', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  <p style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                    {displayRows.length.toLocaleString()} shown
+                    {search && ` · "${search}"`}
+                    {hasActiveColumnFilters && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`}
+                    {colSort && ` · ${dynCols.find(c => c.key === colSort.key)?.label} ${colSort.dir === 'asc' ? (colSort.dataType === 'number' ? 'low → high' : 'oldest first') : (colSort.dataType === 'number' ? 'high → low' : 'newest first')}`}
+                  </p>
+
+                  {/* Only meaningful once two or more columns are filtered — with
+                      one filtered column, all and any give identical results. */}
+                  {Object.keys(columnFilters).length > 1 && (
+                    <div role="group" aria-label="Combine filters" style={{ display: 'flex', gap: '2px', padding: '2px', background: 'var(--surface-sunk)', borderRadius: 'var(--r-full)' }}>
+                      {[
+                        { id: 'all', label: 'Match all', title: 'Rows must match every filtered column' },
+                        { id: 'any', label: 'Match any', title: 'Rows matching any one filtered column' },
+                      ].map(({ id, label, title }) => (
+                        <button key={id} type="button" title={title}
+                          aria-pressed={filterMode === id}
+                          onClick={() => setFilterMode(id)}
+                          style={{
+                            padding: '3px 10px', fontSize: 'var(--t-sm)', fontWeight: 600,
+                            border: 'none', borderRadius: 'var(--r-full)', cursor: 'pointer',
+                            background: filterMode === id ? 'var(--surface)' : 'transparent',
+                            color: filterMode === id ? 'var(--accent)' : 'var(--text-muted)',
+                            boxShadow: filterMode === id ? 'var(--shadow-sm)' : 'none',
+                          }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
 
               <div style={{ background: 'var(--surface)', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'visible' }}>

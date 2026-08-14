@@ -18,6 +18,28 @@ function valuesUrl(sheetId, tabName, rangePart) {
   return `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}`
 }
 
+/** 0-based column index → A1 letter. 0 → A, 25 → Z, 26 → AA. */
+export function colLetter(n) {
+  let s = ''
+  n++
+  while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) }
+  return s
+}
+
+/**
+ * Highest column index the mapping actually refers to, or null when nothing is
+ * mapped yet. Used to bound the read range: 'A:ZZ' is 702 columns, so a sheet
+ * using 15 of them was fetching ~687 empty columns on every single load.
+ */
+function highestMappedIndex(columnMapping) {
+  const m = columnMapping || {}
+  const fixed = ['first_name','middle_name','last_name','organization','status','response','notes','mobile_no','location']
+    .map(k => m[k])
+  const extra = (m.extra || []).map(e => e?.colIndex)
+  const all = [...fixed, ...extra].filter(v => typeof v === 'number' && v >= 0)
+  return all.length ? Math.max(...all) : null
+}
+
 export async function fetchHeaders(sheetUrl, tabName, accessToken) {
   const sheetId = extractSheetId(sheetUrl)
   if (!sheetId) return []
@@ -72,7 +94,11 @@ export async function fetchContacts(sheetUrl, tabName, accessToken, columnMappin
   if (!sheetId) {
     throw new Error('Invalid Google Sheet URL — paste the full docs.google.com link.')
   }
-  const response = await fetch(valuesUrl(sheetId, tabName, 'A:ZZ'), {
+  // Read only as far as the mapping reaches. Falls back to the full width when
+  // nothing is mapped yet (first run), since we don't know what we need.
+  const maxIdx = highestMappedIndex(columnMapping)
+  const rangePart = maxIdx === null ? 'A:ZZ' : `A:${colLetter(maxIdx)}`
+  const response = await fetch(valuesUrl(sheetId, tabName, rangePart), {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   const data = await response.json()
@@ -157,12 +183,6 @@ export async function updateContact(sheetUrl, tabName, accessToken, contact, col
         values[colIndex] = contact.extra[label]
       }
     })
-  }
-
-  const colLetter = (n) => {
-    let s = ''; n++
-    while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) }
-    return s
   }
 
   const rangeA1 = formatTabRange(tabName, `A${row}:${colLetter(maxCol)}${row}`)
