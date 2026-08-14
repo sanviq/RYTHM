@@ -88,17 +88,30 @@ function buildColumns(columnMapping) {
     { key: 'location',     label: 'Location' },
   ]
   const fieldTypes = columnMapping.fieldTypes || {}
+  // typeSource distinguishes "the user picked text" from "nothing was ever saved".
+  // Mappings created before column types shipped have no fieldTypes at all; those
+  // get inferred from the data later (see inferDataType) instead of silently
+  // defaulting to text, which would drop the sort controls with no error.
   fixedFields.forEach(({ key, label }) => {
     const idx = columnMapping[key]
     if (idx !== null && idx !== undefined) {
-      cols.push({ key, label, colIndex: idx, type: 'fixed', dataType: fieldTypes[key] || 'text' })
+      const stored = fieldTypes[key]
+      cols.push({
+        key, label, colIndex: idx, type: 'fixed',
+        dataType: stored || 'text',
+        typeSource: stored ? 'stored' : 'default',
+      })
     }
   })
   if (columnMapping.extra && Array.isArray(columnMapping.extra)) {
     columnMapping.extra.forEach((e) => {
       const { label, colIndex } = e
       if (colIndex !== null && colIndex !== undefined && label) {
-        cols.push({ key: `extra_${label}`, label, colIndex, type: 'extra', dataType: e.dataType || 'text' })
+        cols.push({
+          key: `extra_${label}`, label, colIndex, type: 'extra',
+          dataType: e.dataType || 'text',
+          typeSource: e.dataType ? 'stored' : 'default',
+        })
       }
     })
   }
@@ -147,6 +160,30 @@ function parseNumber(raw) {
   if (raw == null) return null
   const n = parseFloat(String(raw).replace(/[^0-9.\-]/g, ''))
   return Number.isNaN(n) ? null : n
+}
+
+// Infers a column's type from its actual values, for mappings saved before
+// column types existed. Numbers are tested first and separately: parseSheetDate
+// reads a bare number as an Excel serial date, so an ID column would otherwise
+// be classified as a date and sort nonsensically.
+const NUMERIC_RE = /^-?\d[\d,]*(\.\d+)?$/
+const INFER_SAMPLE_SIZE = 60
+const INFER_CONFIDENCE = 0.8
+
+function inferDataType(contacts, col) {
+  let total = 0, numeric = 0, dated = 0
+  for (const c of contacts) {
+    if (total >= INFER_SAMPLE_SIZE) break
+    const raw = String(getCellValue(c, col) ?? '').trim()
+    if (!raw) continue
+    total++
+    if (NUMERIC_RE.test(raw)) { numeric++; continue }
+    if (parseSheetDate(raw) !== null) dated++
+  }
+  if (total === 0) return 'text'
+  if (numeric / total >= INFER_CONFIDENCE) return 'number'
+  if (dated / total >= INFER_CONFIDENCE) return 'date'
+  return 'text'
 }
 
 function uniqueValuesForColumn(contacts, col) {
@@ -223,8 +260,26 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const settingsRef = useRef(null)
 
   const userName = session.user.user_metadata?.full_name || session.user.email
-  const columnMapping = normalizeColumnMapping(activeSheet.column_mapping)
-  const dynCols = buildColumns(columnMapping)
+  // These must be memoized: dynCols is a dependency of the uniqueOptionsByCol and
+  // filtered memos below. Rebuilding the array on every render gave it a new
+  // identity each time, so those memos never hit and every render recomputed
+  // unique values across all rows for all columns — O(rows x columns) per
+  // keystroke, which is what made filtering feel broken rather than merely slow.
+  const columnMapping = useMemo(
+    () => normalizeColumnMapping(activeSheet.column_mapping),
+    [activeSheet.column_mapping]
+  )
+  const baseCols = useMemo(() => buildColumns(columnMapping), [columnMapping])
+
+  // Fill in types for columns whose mapping predates the column-type feature.
+  // Costs one pass over a sample of rows, and only when something is untyped.
+  const dynCols = useMemo(() => {
+    if (!contacts.length) return baseCols
+    if (baseCols.every(c => c.typeSource === 'stored')) return baseCols
+    return baseCols.map(c =>
+      c.typeSource === 'stored' ? c : { ...c, dataType: inferDataType(contacts, c) }
+    )
+  }, [baseCols, contacts])
 
   // ── Load contacts (cache → fetch) ──────────────────────────────────────────
   useEffect(() => {
