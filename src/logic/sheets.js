@@ -125,7 +125,7 @@ export async function fetchContacts(sheetUrl, tabName, accessToken, columnMappin
 
 export async function updateContact(sheetUrl, tabName, accessToken, contact, columnMapping) {
   const sheetId = extractSheetId(sheetUrl)
-  if (!sheetId) return false
+  if (!sheetId) throw new Error('Could not read the sheet ID from the saved URL.')
   const row = contact.rowIndex
   const m = columnMapping || {}
 
@@ -134,7 +134,7 @@ export async function updateContact(sheetUrl, tabName, accessToken, contact, col
     .map(k => m[k]).filter(v => v !== null && v !== undefined)
   const extraIndices = (m.extra || []).map(e => e.colIndex).filter(v => v !== null && v !== undefined)
   const allIndices = [...fixedIndices, ...extraIndices]
-  if (allIndices.length === 0) return false
+  if (allIndices.length === 0) throw new Error('No columns are mapped for this sheet, so there is nothing to write.')
 
   const maxCol = Math.max(...allIndices)
   const values = Array(maxCol + 1).fill('')
@@ -166,14 +166,29 @@ export async function updateContact(sheetUrl, tabName, accessToken, contact, col
   }
 
   const rangeA1 = formatTabRange(tabName, `A${row}:${colLetter(maxCol)}${row}`)
-  const range = encodeURIComponent(rangeA1)
   const response = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?valueInputOption=USER_ENTERED`,
+    // The path segment must be percent-encoded; the body must carry the plain
+    // A1 range. Sending the encoded form in the body makes Sheets reject every
+    // write, because the ':' arrives as '%3A' and the range no longer parses.
+    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(rangeA1)}?valueInputOption=USER_ENTERED`,
     {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ range, majorDimension: 'ROWS', values: [values] })
+      body: JSON.stringify({ range: rangeA1, majorDimension: 'ROWS', values: [values] })
     }
   )
-  return response.ok
+
+  if (!response.ok) {
+    // Surface what Sheets actually said; the caller previously got a bare false
+    // and could only show "something went wrong".
+    let detail = `HTTP ${response.status}`
+    try {
+      const body = await response.json()
+      if (body?.error?.message) detail = body.error.message
+    } catch {
+      // Non-JSON error body (proxy/HTML error page); the status code stands in.
+    }
+    throw new Error(detail)
+  }
+  return true
 }
