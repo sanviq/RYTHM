@@ -1,0 +1,39 @@
+name: Keep Supabase awake
+
+# Supabase pauses free-tier projects after roughly a week of no activity, and a
+# long-paused project is eventually deleted. Rythm is used in bursts, so it can
+# easily go quiet for that long — this issues one cheap authenticated query on a
+# schedule so the project always counts as active.
+#
+# The anon key is deliberately inline: it is already public in the deployed
+# JavaScript bundle and is only safe because row-level security constrains it.
+# Never put the service_role key here.
+
+on:
+  schedule:
+    - cron: '0 6 */3 * *'   # 06:00 UTC, every third day
+  workflow_dispatch:         # and on demand, from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Supabase
+        env:
+          SUPABASE_URL: https://oqcbxcfdytpqmbywsoap.supabase.co
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xY2J4Y2ZkeXRwcW1ieXdzb2FwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2MjMxMzUsImV4cCI6MjA5MDE5OTEzNX0.X0VWRHMbP0BXabYs_PNHMDuacXdwLruTat2jAtdU6RA
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /tmp/out -w '%{http_code}' --max-time 30 \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            "$SUPABASE_URL/rest/v1/user_sheets?select=id&limit=1")
+          echo "HTTP $code"
+          # RLS means an unauthenticated caller correctly gets an empty array;
+          # the point is that the query reached the database at all.
+          if [ "$code" != "200" ]; then
+            echo "Unexpected response — the project may be paused or the key rotated:"
+            cat /tmp/out
+            exit 1
+          fi
+          echo "Project is awake."
