@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './logic/supabase'
 import { fetchContacts, updateContact, fetchHeaders } from './logic/sheets'
@@ -389,7 +389,37 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     )
   }, [baseCols, contacts])
 
+  // Declared above the effect that calls it, and takes its sheet explicitly so
+  // it closes over nothing but stable setters — hence useCallback([]) and a
+  // stable identity, which lets the effect list it as a dependency without
+  // re-running. Previously it was declared below its caller and relied on
+  // effects running after render to avoid a temporal-dead-zone error.
+  const loadContacts = useCallback(async (sheet) => {
+    const mapping = normalizeColumnMapping(sheet.column_mapping)
+    setLoading(true)
+    setSheetError(null)
+    const accessToken = await getFreshToken()
+    if (!accessToken) { setTokenError(true); setLoading(false); setCacheHit(null); return }
+
+    try {
+      const data = await fetchContacts(sheet.sheet_url, sheet.tab_name, accessToken, mapping)
+      setContacts(data)
+      await saveToCache(sheet.id, data)
+      setCacheHit('live')
+    } catch (e) {
+      setSheetError(e?.message || 'Could not load your Google Sheet.')
+      setContacts([])
+      setCacheHit(null)
+    }
+    setLoading(false)
+  }, [])
+
   // ── Load contacts (cache → fetch) ──────────────────────────────────────────
+  // App keys this component on activeSheet.id, so switching sheets already
+  // remounts and resets everything below. The resets still matter for a re-map,
+  // which replaces the sheet object without changing its id: the columns change,
+  // so filters and sorts referring to the old ones must be cleared.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate per-sheet reset; see above
   useEffect(() => {
     setSelected(null)
     setEditing(false)
@@ -417,7 +447,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         setLoading(false)
         setCacheHit('cache')
       } else {
-        loadContacts()
+        loadContacts(activeSheet)
       }
     })
 
@@ -427,27 +457,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
       cancelled = true
       window.removeEventListener('resize', handleResize)
     }
-  }, [activeSheet.id])
+  }, [activeSheet.id, activeSheet.column_mapping, loadContacts])
 
-  const loadContacts = async (sheet = activeSheet) => {
-    const mapping = normalizeColumnMapping(sheet.column_mapping)
-    setLoading(true)
-    setSheetError(null)
-    const accessToken = await getFreshToken()
-    if (!accessToken) { setTokenError(true); setLoading(false); setCacheHit(null); return }
-
-    try {
-      const data = await fetchContacts(sheet.sheet_url, sheet.tab_name, accessToken, mapping)
-      setContacts(data)
-      await saveToCache(sheet.id, data)
-      setCacheHit('live')
-    } catch (e) {
-      setSheetError(e?.message || 'Could not load your Google Sheet.')
-      setContacts([])
-      setCacheHit(null)
-    }
-    setLoading(false)
-  }
 
   const handleRefresh = async () => {
     setCacheHit(null)
