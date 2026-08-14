@@ -744,7 +744,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Nav ────────────────────────────────────────────────────────────────────
   const nav = (
     <div className="app-header">
-      <span style={{ fontSize: 'var(--t-lg)', fontWeight: 800, letterSpacing: '2px', color: 'var(--accent)' }}>RYTHM</span>
+      <span style={{ fontSize: 'var(--t-lg)', fontWeight: 800, letterSpacing: '2px', color: 'var(--accent)' }}>RHYTHM</span>
 
       <div ref={sheetDropRef} style={{ position: 'relative' }}>
         <button
@@ -801,6 +801,9 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         {settingsOpen && (
           <div className="menu" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '200px', zIndex: 200 }}>
             {[
+              // Opens the underlying sheet so the source of truth is always one
+              // click away — everything the app shows is written straight back there.
+              { label: 'View on Google Sheet', action: () => { setSettingsOpen(false); window.open(activeSheet.sheet_url, '_blank', 'noopener,noreferrer') } },
               { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
               { label: 'Re-map Columns', action: handleStartRemap },
               { label: deleting ? 'Deleting…' : 'Delete This Sheet', action: handleDeleteSheet, danger: true },

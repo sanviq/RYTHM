@@ -125,7 +125,7 @@ export default function ColumnMapper({ headers, initialMapping, onConfirm, onBac
         boxShadow: '0 4px 24px rgba(79,70,229,0.10)',
         padding: '36px 40px', width: '100%', maxWidth: '600px'
       }}>
-        <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: 'var(--accent)' }}>RYTHM</span>
+        <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: 'var(--accent)' }}>RHYTHM</span>
         <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text)', margin: '20px 0 4px' }}>Map your columns</h2>
         <p style={{ fontSize: '13px', color: 'var(--text-subtle)', margin: '0 0 4px' }}>
           We detected {headers.length} columns. Match them to Rythm fields.

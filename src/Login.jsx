@@ -57,7 +57,7 @@ export default function Login({ authError = null }) {
           fontSize: 'var(--t-2xl)', fontWeight: 700,
         }}>R</div>
 
-        <h1 style={{ fontSize: 'var(--t-2xl)', fontWeight: 700, letterSpacing: '-.02em' }}>Rythm</h1>
+        <h1 style={{ fontSize: 'var(--t-2xl)', fontWeight: 700, letterSpacing: '-.02em' }}>Rhythm</h1>
         <p style={{ marginTop: 'var(--s-2)', fontSize: 'var(--t-md)', color: 'var(--text-muted)' }}>
           Your Google Sheets, as a CRM.
         </p>
