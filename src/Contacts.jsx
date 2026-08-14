@@ -210,7 +210,7 @@ function FilterChevron({ open, active }) {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden
       style={{ flexShrink: 0, opacity: active ? 1 : 0.45, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
-      <path d="M3 4.5L6 7.5L9 4.5" stroke={active ? '#4f46e5' : 'currentColor'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 4.5L6 7.5L9 4.5" stroke={active ? 'var(--accent)' : 'currentColor'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -222,7 +222,7 @@ function SortButton({ active, dir, onCycle, title }) {
     <button type="button"
       title={title || (active ? (dir === 'asc' ? 'Sorted low → high' : 'Sorted high → low') : 'Sort')}
       onClick={e => { e.stopPropagation(); onCycle() }}
-      style={{ flexShrink: 0, padding: '2px 5px', margin: 0, border: 'none', background: active ? '#dbeafe' : 'transparent', cursor: 'pointer', borderRadius: '4px', fontSize: '12px', fontWeight: '700', color: active ? '#1d4ed8' : '#94a3b8', lineHeight: 1 }}>
+      style={{ flexShrink: 0, padding: '2px 5px', margin: 0, border: 'none', background: active ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', borderRadius: '4px', fontSize: '12px', fontWeight: '700', color: active ? '#1d4ed8' : '#94a3b8', lineHeight: 1 }}>
       {active ? (dir === 'asc' ? '↑' : '↓') : '⇅'}
     </button>
   )
@@ -238,6 +238,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const [editData, setEditData] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const [panelWidth, setPanelWidth] = useState(480)
   const [dragging, setDragging] = useState(false)
   const [columnFilters, setColumnFilters] = useState({})
@@ -286,6 +287,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     setSelected(null)
     setEditing(false)
     setEditData(null)
+    setSaveError(null)
     setTokenError(false)
     setSheetError(null)
     setSearch('')
@@ -464,10 +466,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     maxWidth: 'min(280px, calc(100vw - 24px))',
     maxHeight: 'min(280px, 50vh)',
     overflowY: 'auto',
-    background: '#fff',
+    background: 'var(--surface)',
     borderRadius: '10px',
     boxShadow: '0 8px 28px rgba(0,0,0,0.12)',
-    border: '1px solid #e8e8e8',
+    border: '1px solid var(--border)',
     padding: '8px 0',
     zIndex: 5000,
     textAlign: 'left',
@@ -479,18 +481,18 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const renderFilterOptions = (col) => {
     const options = uniqueOptionsByCol[col.key] || []
     const sel = columnFilters[col.key] || []
-    if (options.length === 0) return <p style={{ padding: '8px 14px', margin: 0, fontSize: '12px', color: '#888' }}>No values yet.</p>
+    if (options.length === 0) return <p style={{ padding: '8px 14px', margin: 0, fontSize: '12px', color: 'var(--text-subtle)' }}>No values yet.</p>
     return (
       <>
         {options.map(opt => (
-          <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '12px', color: '#333', cursor: 'pointer', userSelect: 'none' }} onMouseDown={e => e.preventDefault()}>
-            <input type="checkbox" checked={sel.includes(opt)} onChange={() => toggleColumnFilterValue(col.key, opt)} style={{ accentColor: '#4f46e5', cursor: 'pointer' }} />
+          <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '12px', color: 'var(--text)', cursor: 'pointer', userSelect: 'none' }} onMouseDown={e => e.preventDefault()}>
+            <input type="checkbox" checked={sel.includes(opt)} onChange={() => toggleColumnFilterValue(col.key, opt)} style={{ accentColor: 'var(--accent)', cursor: 'pointer' }} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt === EMPTY_SENTINEL ? '(Blanks)' : opt}</span>
           </label>
         ))}
         {sel.length > 0 && (
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => clearColumnFilter(col.key)}
-            style={{ margin: '6px 14px 4px', padding: '6px 10px', fontSize: '11px', fontWeight: '600', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer', width: 'calc(100% - 28px)' }}>
+            className="btn btn-sm" style={{ margin: 'var(--s-2) var(--s-4) var(--s-1)', color: 'var(--danger)', background: 'var(--danger-soft)', width: 'calc(100% - 28px)' }}>
             Clear this column
           </button>
         )}
@@ -503,14 +505,14 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     return (
       <>
         {[{ v: NOTES_HAS, label: 'Has notes' }, { v: NOTES_NO, label: 'No notes' }].map(({ v, label }) => (
-          <label key={v} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '12px', color: '#333', cursor: 'pointer', userSelect: 'none' }} onMouseDown={e => e.preventDefault()}>
-            <input type="checkbox" checked={sel.includes(v)} onChange={() => toggleColumnFilterValue(NOTES_FILTER_KEY, v)} style={{ accentColor: '#4f46e5', cursor: 'pointer' }} />
+          <label key={v} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 14px', fontSize: '12px', color: 'var(--text)', cursor: 'pointer', userSelect: 'none' }} onMouseDown={e => e.preventDefault()}>
+            <input type="checkbox" checked={sel.includes(v)} onChange={() => toggleColumnFilterValue(NOTES_FILTER_KEY, v)} style={{ accentColor: 'var(--accent)', cursor: 'pointer' }} />
             <span>{label}</span>
           </label>
         ))}
         {sel.length > 0 && (
           <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => clearColumnFilter(NOTES_FILTER_KEY)}
-            style={{ margin: '6px 14px 4px', padding: '6px 10px', fontSize: '11px', fontWeight: '600', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', cursor: 'pointer', width: 'calc(100% - 28px)' }}>
+            className="btn btn-sm" style={{ margin: 'var(--s-2) var(--s-4) var(--s-1)', color: 'var(--danger)', background: 'var(--danger-soft)', width: 'calc(100% - 28px)' }}>
             Clear notes filter
           </button>
         )}
@@ -521,17 +523,17 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Styles ─────────────────────────────────────────────────────────────────
   const statusStyle = (val) => {
     const s = (val || '').toUpperCase()
-    if (s === 'HOT') return { background: '#fdecea', color: '#c62828' }
-    if (s === 'WARM') return { background: '#fff3e0', color: '#e65100' }
-    if (s === 'COLD') return { background: '#e8f4fd', color: '#1565c0' }
-    return { background: '#f0f0f0', color: '#888' }
+    if (s === 'HOT') return { background: 'var(--danger-soft)', color: 'var(--danger)' }
+    if (s === 'WARM') return { background: 'var(--warning-soft)', color: 'var(--warning)' }
+    if (s === 'COLD') return { background: 'var(--info-soft)', color: 'var(--info)' }
+    return { background: 'var(--surface-sunk)', color: 'var(--text-subtle)' }
   }
 
   const avatarColor = (val) => {
     const s = (val || '').toUpperCase()
-    if (s === 'HOT') return { background: '#fdecea', color: '#c62828' }
-    if (s === 'WARM') return { background: '#fff3e0', color: '#e65100' }
-    return { background: '#ede9fe', color: '#4f46e5' }
+    if (s === 'HOT') return { background: 'var(--danger-soft)', color: 'var(--danger)' }
+    if (s === 'WARM') return { background: 'var(--warning-soft)', color: 'var(--warning)' }
+    return { background: 'var(--accent-soft)', color: 'var(--accent)' }
   }
 
   // ── Drag panel ─────────────────────────────────────────────────────────────
@@ -551,10 +553,11 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   const handleSave = async () => {
     setSaving(true)
+    setSaveError(null)
     const accessToken = await getFreshToken()
     if (!accessToken) { alert('Session expired. Please sign out and sign back in.'); setSaving(false); return }
-    const success = await updateContact(activeSheet.sheet_url, activeSheet.tab_name, accessToken, editData, columnMapping)
-    if (success) {
+    try {
+      await updateContact(activeSheet.sheet_url, activeSheet.tab_name, accessToken, editData, columnMapping)
       const updated = contacts.map(c =>
         c.rowIndex === editData.rowIndex ? { ...editData, full_name: [editData.first_name, editData.middle_name, editData.last_name].filter(Boolean).join(' ') } : c
       )
@@ -562,8 +565,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
       await saveToCache(activeSheet.id, updated)
       setEditing(false); setEditData(null); setSelected(null)
       setSaveMsg(true); setTimeout(() => setSaveMsg(false), 3000)
-    } else {
-      alert('Something went wrong. Try again.')
+    } catch (e) {
+      // Show what Google actually rejected — a generic message here hid a
+      // malformed-range bug that broke saving on every sheet.
+      setSaveError(e?.message || 'Could not save to your Google Sheet.')
     }
     setSaving(false)
   }
@@ -603,21 +608,21 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Field renderers ────────────────────────────────────────────────────────
   const field = (label, key, multiline = false) => (
     <div style={{ marginBottom: '16px' }}>
-      <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
+      <p style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
       {multiline
         ? <textarea value={editData[key] || ''} onChange={e => setEditData({ ...editData, [key]: e.target.value })} rows={4}
-            style={{ width: '100%', padding: '10px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', color: '#333', boxSizing: 'border-box' }} />
+            style={{ width: '100%', padding: '10px 12px', fontSize: '13px', border: '1px solid var(--border-strong)', borderRadius: '8px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', lineHeight: '1.5', color: 'var(--text)', boxSizing: 'border-box' }} />
         : <input type="text" value={editData[key] || ''} onChange={e => setEditData({ ...editData, [key]: e.target.value })}
-            style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', color: '#333', boxSizing: 'border-box' }} />}
+            style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid var(--border-strong)', borderRadius: '8px', outline: 'none', color: 'var(--text)', boxSizing: 'border-box' }} />}
     </div>
   )
 
   const extraField = (label) => (
     <div key={label} style={{ marginBottom: '16px' }}>
-      <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
+      <p style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 6px' }}>{label}</p>
       <input type="text" value={(editData.extra && editData.extra[label]) || ''}
         onChange={e => setEditData({ ...editData, extra: { ...editData.extra, [label]: e.target.value } })}
-        style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid #ddd', borderRadius: '8px', outline: 'none', color: '#333', boxSizing: 'border-box' }} />
+        style={{ width: '100%', padding: '8px 12px', fontSize: '13px', border: '1px solid var(--border-strong)', borderRadius: '8px', outline: 'none', color: 'var(--text)', boxSizing: 'border-box' }} />
     </div>
   )
 
@@ -628,11 +633,11 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         <div style={{ width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', fontWeight: '800', marginBottom: '10px', ...avatarColor(contact.status) }}>
           {(contact.full_name || '?').charAt(0).toUpperCase()}
         </div>
-        <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#111', margin: 0 }}>{contact.full_name || '—'}</h2>
-        <p style={{ fontSize: '13px', color: '#888', margin: '2px 0 0' }}>{contact.organization || '—'}</p>
+        <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text)', margin: 0 }}>{contact.full_name || '—'}</h2>
+        <p style={{ fontSize: '13px', color: 'var(--text-subtle)', margin: '2px 0 0' }}>{contact.organization || '—'}</p>
       </div>
       <button onClick={() => { setSelected(null); setEditing(false); setEditData(null) }}
-        style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#aaa' }}>x</button>
+        style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: 'var(--text-subtle)' }}>x</button>
     </div>
   )
 
@@ -645,20 +650,25 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             const isBadge = BADGE_KEYS.has(key)
             return (
               <div key={key} style={{ marginBottom: '14px' }}>
-                <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 4px' }}>{label}</p>
+                <p style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 4px' }}>{label}</p>
                 {isBadge
-                  ? <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', display: 'inline-block', ...statusStyle(value) }}>{value || '—'}</span>
-                  : <p style={{ fontSize: '14px', color: '#333', margin: 0 }}>{value || '—'}</p>}
+                  ? <span className="badge" style={statusStyle(value)}>{value || '—'}</span>
+                  : <p style={{ fontSize: 'var(--t-md)', color: value ? 'var(--text)' : 'var(--text-subtle)', margin: 0 }}>{value || '—'}</p>}
               </div>
             )
           })}
-          <div style={{ marginBottom: '20px' }}>
-            <p style={{ fontSize: '11px', fontWeight: '700', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
-            <div style={{ background: '#f9f8ff', borderRadius: '10px', padding: '14px', fontSize: '13px', color: '#444', lineHeight: '1.6', whiteSpace: 'pre-wrap', border: '1px solid #ede9fe' }}>
+          <div style={{ marginBottom: 'var(--s-5)' }}>
+            <p className="label">Notes</p>
+            <div style={{
+              background: 'var(--surface-2)', border: '1px solid var(--border)',
+              borderRadius: 'var(--r-md)', padding: 'var(--s-4)',
+              fontSize: 'var(--t-base)', lineHeight: 1.6, whiteSpace: 'pre-wrap',
+              color: contact.notes ? 'var(--text-muted)' : 'var(--text-subtle)',
+            }}>
               {contact.notes || 'No notes for this contact.'}
             </div>
           </div>
-          <button onClick={handleEdit} style={{ width: '100%', padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer' }}>
+          <button className="btn btn-primary" onClick={handleEdit} style={{ width: '100%' }}>
             Edit Contact
           </button>
         </>
@@ -669,10 +679,18 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
           {field('Last Name', 'last_name')}
           {dynCols.map(({ key, label, type }) => type === 'fixed' ? field(label, key) : extraField(label))}
           {field('Notes', 'notes', true)}
-          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-            <button onClick={handleCancel} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#f5f5f5', color: '#555', border: '1px solid #ddd', borderRadius: '10px', cursor: 'pointer' }}>Cancel</button>
-            <button onClick={handleSave} disabled={saving} style={{ flex: 1, padding: '11px', fontSize: '14px', fontWeight: '600', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: '10px', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 }}>
-              {saving ? 'Saving...' : 'Save'}
+          {saveError && (
+            <p role="alert" style={{
+              marginTop: 'var(--s-3)', padding: 'var(--s-3)',
+              fontSize: 'var(--t-sm)', lineHeight: 1.5,
+              color: 'var(--danger)', background: 'var(--danger-soft)',
+              borderRadius: 'var(--r-md)',
+            }}>{saveError}</p>
+          )}
+          <div style={{ display: 'flex', gap: 'var(--s-2)', marginTop: 'var(--s-2)' }}>
+            <button className="btn btn-secondary" onClick={handleCancel} style={{ flex: 1 }}>Cancel</button>
+            <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ flex: 1 }}>
+              {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
         </>
@@ -801,7 +819,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Table header cell with filter ──────────────────────────────────────────
   const thFilterBtn = (key, hasFilter) => (
     <button type="button" data-col-filter title="Filter" onClick={e => openFilter(e, key)}
-      style={{ flexShrink: 0, padding: '2px 4px', margin: 0, border: 'none', background: hasFilter ? '#ede9fe' : 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', color: '#666' }}>
+      style={{ flexShrink: 0, padding: '2px 4px', margin: 0, border: 'none', background: hasFilter ? 'var(--accent-soft)' : 'transparent', cursor: 'pointer', borderRadius: '4px', display: 'flex', alignItems: 'center', color: 'var(--text-muted)' }}>
       <FilterChevron open={openFilterCol === key} active={hasFilter} />
     </button>
   )
@@ -810,21 +828,21 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   const searchAndFilters = (
     <div style={{ padding: '16px 16px 8px' }}>
       <input type="text" placeholder="Search name, organization, location…" value={search} onChange={e => setSearch(e.target.value)}
-        style={{ width: '100%', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', marginBottom: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', boxSizing: 'border-box' }} />
+        style={{ width: '100%', padding: '11px 18px', fontSize: '14px', border: '1px solid var(--border-strong)', borderRadius: '10px', outline: 'none', background: 'var(--surface)', marginBottom: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', boxSizing: 'border-box' }} />
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
         <button type="button" onClick={() => setMobileFiltersOpen(true)}
-          style={{ padding: '10px 14px', fontSize: '13px', fontWeight: '600', border: `1.5px solid ${hasActiveColumnFilters ? '#4f46e5' : '#ddd'}`, borderRadius: '10px', background: hasActiveColumnFilters ? '#ede9fe' : '#fff', color: hasActiveColumnFilters ? '#4f46e5' : '#555', cursor: 'pointer' }}>
+          style={{ padding: '10px 14px', fontSize: '13px', fontWeight: '600', border: `1.5px solid ${hasActiveColumnFilters ? 'var(--accent)' : 'var(--border-strong)'}`, borderRadius: '10px', background: hasActiveColumnFilters ? 'var(--accent-soft)' : 'var(--surface)', color: hasActiveColumnFilters ? 'var(--accent)' : 'var(--text-muted)', cursor: 'pointer' }}>
           Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
         </button>
         {(search || hasActiveColumnFilters || colSort) && (
           <button type="button" onClick={() => { setSearch(''); clearAllColumnFilters(); setColSort(null); setSelected(null) }}
-            style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer' }}>
+            style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid var(--danger)', borderRadius: '10px', background: 'var(--danger-soft)', color: 'var(--danger)', cursor: 'pointer' }}>
             Clear all
           </button>
         )}
       </div>
       {(search || hasActiveColumnFilters || colSort) && (
-        <p style={{ fontSize: '12px', color: '#888', margin: '8px 0 0' }}>{displayRows.length.toLocaleString()} shown</p>
+        <p style={{ fontSize: '12px', color: 'var(--text-subtle)', margin: '8px 0 0' }}>{displayRows.length.toLocaleString()} shown</p>
       )}
     </div>
   )
@@ -844,10 +862,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         {nav}
 
         {sheetError && (
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', justifyContent: 'space-between', flexWrap: 'wrap', padding: '12px 16px', background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#991b1b', fontSize: '13px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', justifyContent: 'space-between', flexWrap: 'wrap', padding: '12px 16px', background: 'var(--danger-soft)', borderBottom: '1px solid var(--danger)', color: '#991b1b', fontSize: '13px' }}>
             <span>{sheetError}</span>
             <button type="button" onClick={() => { clearCache(activeSheet.id); loadContacts(activeSheet) }}
-              style={{ padding: '6px 14px', fontSize: '12px', fontWeight: '600', background: '#fff', color: '#991b1b', border: '1px solid #fca5a5', borderRadius: '8px', cursor: 'pointer' }}>
+              style={{ padding: '6px 14px', fontSize: '12px', fontWeight: '600', background: 'var(--surface)', color: '#991b1b', border: '1px solid var(--danger)', borderRadius: '8px', cursor: 'pointer' }}>
               Retry
             </button>
           </div>
@@ -856,7 +874,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         {/* Filter portal for desktop */}
         {!isMobile && openFilterCol && filterMenuPos && createPortal(
           <div data-col-filter-portal style={filterPopoverStyle} onClick={e => e.stopPropagation()}>
-            <p style={{ margin: '0 0 6px', padding: '0 14px', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+            <p style={{ margin: '0 0 6px', padding: '0 14px', fontSize: '10px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
               {openFilterCol === NOTES_FILTER_KEY ? 'Notes' : dynCols.find(c => c.key === openFilterCol)?.label}
             </p>
             {openFilterCol === NOTES_FILTER_KEY
@@ -872,28 +890,28 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
             {mobileFiltersOpen && (
               <div style={{ position: 'fixed', inset: 0, zIndex: 450, background: 'rgba(0,0,0,0.4)' }} onClick={() => setMobileFiltersOpen(false)}>
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '78vh', background: '#fff', borderRadius: '16px 16px 0 0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
-                  <div style={{ width: '40px', height: '4px', background: '#ddd', borderRadius: '2px', margin: '10px auto 0' }} />
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, maxHeight: '78vh', background: 'var(--surface)', borderRadius: '16px 16px 0 0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+                  <div style={{ width: '40px', height: '4px', background: 'var(--border-strong)', borderRadius: '2px', margin: '10px auto 0' }} />
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px', borderBottom: '1px solid #eee' }}>
-                    <span style={{ fontSize: '16px', fontWeight: '700', color: '#111' }}>Filters</span>
-                    <button type="button" onClick={() => setMobileFiltersOpen(false)} style={{ fontSize: '14px', fontWeight: '600', color: '#4f46e5', border: 'none', background: 'none', cursor: 'pointer' }}>Done</button>
+                    <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text)' }}>Filters</span>
+                    <button type="button" onClick={() => setMobileFiltersOpen(false)} style={{ fontSize: '14px', fontWeight: '600', color: 'var(--accent)', border: 'none', background: 'none', cursor: 'pointer' }}>Done</button>
                   </div>
                   <div style={{ overflowY: 'auto', padding: '8px 0 24px', flex: 1 }}>
                     <div style={{ marginBottom: '16px', padding: '0 16px' }}>
-                      <p style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
-                      <div style={{ border: '1px solid #e8e8e8', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>{renderNotesFilterOptions()}</div>
+                      <p style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Notes</p>
+                      <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>{renderNotesFilterOptions()}</div>
                     </div>
                     {dynCols.map(col => (
                       <div key={col.key} style={{ marginBottom: '16px', padding: '0 16px' }}>
-                        <p style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>{col.label}</p>
-                        <div style={{ border: '1px solid #e8e8e8', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>{renderFilterOptions(col)}</div>
+                        <p style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>{col.label}</p>
+                        <div style={{ border: '1px solid var(--border)', borderRadius: '10px', padding: '6px 0', background: '#fafafa' }}>{renderFilterOptions(col)}</div>
                       </div>
                     ))}
                   </div>
                   {hasActiveColumnFilters && (
                     <div style={{ padding: '12px 16px', borderTop: '1px solid #eee' }}>
                       <button type="button" onClick={clearAllColumnFilters}
-                        style={{ width: '100%', padding: '12px', fontSize: '14px', fontWeight: '600', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', cursor: 'pointer' }}>
+                        style={{ width: '100%', padding: '12px', fontSize: '14px', fontWeight: '600', color: 'var(--danger)', background: 'var(--danger-soft)', border: '1px solid var(--danger)', borderRadius: '10px', cursor: 'pointer' }}>
                         Clear all filters
                       </button>
                     </div>
@@ -905,21 +923,21 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             <div style={{ padding: '0 12px 100px' }}>
               {displayRows.map((c, i) => (
                 <div key={i} className="contact-card" onClick={() => { setSelected(i); setEditing(false); setEditData(null) }}
-                  style={{ background: '#fff', borderRadius: '14px', border: '1px solid #e8e8e8', padding: '14px 16px', marginBottom: '10px', cursor: 'pointer', transition: 'border-color 0.15s' }}>
+                  style={{ background: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', padding: '14px 16px', marginBottom: '10px', cursor: 'pointer', transition: 'border-color 0.15s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', flexShrink: 0, ...avatarColor(c.status) }}>
                       {(c.full_name || '?').charAt(0).toUpperCase()}
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      <p style={{ fontSize: '15px', fontWeight: '600', color: '#111', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.first_name || c.full_name || '—'}</p>
-                      <p style={{ fontSize: '13px', color: '#888', margin: '2px 0 0' }}>{c.organization || '—'}</p>
+                      <p style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.first_name || c.full_name || '—'}</p>
+                      <p style={{ fontSize: '13px', color: 'var(--text-subtle)', margin: '2px 0 0' }}>{c.organization || '—'}</p>
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', ...statusStyle(c.status) }}>{c.status || '—'}</span>
                     <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', ...statusStyle(c.response) }}>{c.response || '—'}</span>
-                    <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>{c.mobile_no || ''}</span>
-                    <span style={{ fontSize: '15px' }}>{c.notes ? <span style={{ color: '#4f46e5' }}>●</span> : <span style={{ color: '#ddd' }}>○</span>}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-subtle)', marginLeft: 'auto' }}>{c.mobile_no || ''}</span>
+                    <span style={{ fontSize: '15px' }}>{c.notes ? <span style={{ color: 'var(--accent)' }}>●</span> : <span style={{ color: 'var(--border-strong)' }}>○</span>}</span>
                   </div>
                 </div>
               ))}
@@ -928,8 +946,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             {selected !== null && displayRows[selected] && (
               <div style={{ position: 'fixed', inset: 0, zIndex: 200 }}>
                 <div onClick={() => { setSelected(null); setEditing(false); setEditData(null) }} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)' }} />
-                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: '#fff', borderRadius: '20px 20px 0 0', maxHeight: '85vh', overflowY: 'auto', animation: 'slideUp 0.25s ease' }}>
-                  <div style={{ width: '40px', height: '4px', background: '#ddd', borderRadius: '2px', margin: '12px auto 0' }} />
+                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'var(--surface)', borderRadius: '20px 20px 0 0', maxHeight: '85vh', overflowY: 'auto', animation: 'slideUp 0.25s ease' }}>
+                  <div style={{ width: '40px', height: '4px', background: 'var(--border-strong)', borderRadius: '2px', margin: '12px auto 0' }} />
                   {panelHeader(displayRows[selected])}
                   {panelContent(displayRows[selected])}
                 </div>
@@ -942,7 +960,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto', padding: '20px 24px' }}>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap' }}>
                 <input type="text" placeholder="Search name, organization, location…" value={search} onChange={e => setSearch(e.target.value)}
-                  style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid #ddd', borderRadius: '10px', outline: 'none', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }} />
+                  style={{ flex: 1, minWidth: '200px', padding: '11px 18px', fontSize: '14px', border: '1px solid var(--border-strong)', borderRadius: '10px', outline: 'none', background: 'var(--surface)', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }} />
 
                 {/* ── CHANGE 7: sort dropdown now covers number cols too ── */}
                 {sortableColumns.length > 0 && (
@@ -955,7 +973,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                       const col = dynCols.find(c => c.key === k)
                       setColSort({ key: k, dir: d, dataType: col?.dataType })
                     }}
-                    style={{ padding: '10px 12px', fontSize: '13px', borderRadius: '10px', border: '1px solid #ddd', background: '#fff', color: '#333', cursor: 'pointer' }}>
+                    style={{ padding: '10px 12px', fontSize: '13px', borderRadius: '10px', border: '1px solid var(--border-strong)', background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer' }}>
                     <option value="">Sort: none</option>
                     {sortableColumns.flatMap(c => {
                       const isNum = c.dataType === 'number'
@@ -969,14 +987,14 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
                 {(search || hasActiveColumnFilters || colSort) && (
                   <button type="button" onClick={() => { setSearch(''); clearAllColumnFilters(); setColSort(null); setSelected(null) }}
-                    style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #fca5a5', borderRadius: '10px', background: '#fef2f2', color: '#dc2626', cursor: 'pointer', flexShrink: 0 }}>
+                    style={{ padding: '11px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid var(--danger)', borderRadius: '10px', background: 'var(--danger-soft)', color: 'var(--danger)', cursor: 'pointer', flexShrink: 0 }}>
                     Clear all
                   </button>
                 )}
               </div>
 
               {(search || hasActiveColumnFilters || colSort) && (
-                <p style={{ fontSize: '13px', color: '#666', marginBottom: '10px' }}>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '10px' }}>
                   {displayRows.length.toLocaleString()} shown
                   {search && ` · "${search}"`}
                   {hasActiveColumnFilters && ` · ${activeFilterCount} filter${activeFilterCount === 1 ? '' : 's'}`}
@@ -984,7 +1002,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                 </p>
               )}
 
-              <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'visible' }}>
+              <div style={{ background: 'var(--surface)', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'visible' }}>
                 <div style={{ overflowX: 'auto' }}>
                   <table className="data-table" style={{ tableLayout: 'auto' }}>
                     <thead>
@@ -1053,10 +1071,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             {selected !== null && displayRows[selected] && (
               <>
                 <div onMouseDown={startDrag}
-                  style={{ width: '5px', cursor: 'col-resize', background: dragging ? '#4f46e5' : 'transparent', transition: 'background 0.2s', flexShrink: 0, zIndex: 10 }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#c7d2fe'}
+                  style={{ width: '5px', cursor: 'col-resize', background: dragging ? 'var(--accent)' : 'transparent', transition: 'background 0.2s', flexShrink: 0, zIndex: 10 }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--accent-border)'}
                   onMouseLeave={e => { if (!dragging) e.currentTarget.style.background = 'transparent' }} />
-                <div style={{ width: `${panelWidth}px`, minWidth: '260px', background: '#fff', borderLeft: '1px solid #e0e0e0', overflowY: 'auto', boxShadow: '-4px 0 20px rgba(79,70,229,0.08)', animation: 'slideIn 0.2s ease', flexShrink: 0 }}>
+                <div style={{ width: `${panelWidth}px`, minWidth: '260px', background: 'var(--surface)', borderLeft: '1px solid var(--border)', overflowY: 'auto', boxShadow: '-4px 0 20px rgba(79,70,229,0.08)', animation: 'slideIn 0.2s ease', flexShrink: 0 }}>
                   {panelHeader(displayRows[selected])}
                   {panelContent(displayRows[selected])}
                 </div>
@@ -1066,7 +1084,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         )}
 
         {saveMsg && (
-          <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: '#166534', color: '#fff', padding: '12px 24px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 999, animation: 'slideUp 0.2s ease' }}>
+          <div style={{ position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)', background: '#166534', color: 'var(--text-inverse)', padding: '12px 24px', borderRadius: '10px', fontSize: '14px', fontWeight: '600', boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 999, animation: 'slideUp 0.2s ease' }}>
             Saved to Google Sheet
           </div>
         )}
