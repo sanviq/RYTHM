@@ -93,7 +93,7 @@ export default function SheetSetup({ session, onSheetSaved, onCancel }) {
         boxShadow: '0 4px 24px rgba(79,70,229,0.10)',
         padding: '36px 40px', width: '100%', maxWidth: '480px'
       }}>
-        <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: 'var(--accent)' }}>RYTHM</span>
+        <span style={{ fontSize: '20px', fontWeight: '900', letterSpacing: '3px', color: 'var(--accent)' }}>RHYTHM</span>
         <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text)', margin: '20px 0 4px' }}>Connect a Google Sheet</h2>
         <p style={{ fontSize: '13px', color: 'var(--text-subtle)', margin: '0 0 28px' }}>
           Paste your sheet URL, enter the tab name, and give this sheet a label.
