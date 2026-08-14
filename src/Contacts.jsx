@@ -206,6 +206,62 @@ function cellMatchesColumnFilter(c, col, selectedValues) {
   return selectedValues.includes(raw)
 }
 
+// ── Row virtualization ───────────────────────────────────────────────────────
+// With 15k rows the table put ~200k-400k elements in the DOM, which is well past
+// where browsers keep scrolling smooth. This renders only the rows near the
+// viewport and reserves the rest of the height with two spacer rows, so the
+// scrollbar and page geometry are unchanged.
+//
+// It virtualizes against the *window* rather than an inner scroll container, so
+// the existing page scroll and the sticky header keep working as before.
+const ROW_HEIGHT = 44      // must match .data-table tbody tr height in theme.css
+const OVERSCAN = 8         // rows kept beyond each edge, to hide fast scrolling
+const VIRTUALIZE_ABOVE = 100
+
+function useWindowVirtual(totalRows, enabled) {
+  const anchorRef = useRef(null)
+  // Start narrow when virtualizing, or the very first paint would mount every
+  // row before the effect below has a chance to shrink the window.
+  const [range, setRange] = useState(() => ({
+    start: 0,
+    end: enabled ? Math.min(totalRows, 60) : totalRows,
+  }))
+
+  useEffect(() => {
+    if (!enabled) return
+    let frame = 0
+    const compute = () => {
+      frame = 0
+      const el = anchorRef.current
+      if (!el) return
+      // Spacers keep the tbody's document position fixed, so its distance above
+      // the viewport is exactly how far we've scrolled into the rows.
+      const scrolledPast = Math.max(0, -el.getBoundingClientRect().top)
+      const start = Math.max(0, Math.floor(scrolledPast / ROW_HEIGHT) - OVERSCAN)
+      const visible = Math.ceil(window.innerHeight / ROW_HEIGHT) + OVERSCAN * 2
+      const end = Math.min(totalRows, start + visible)
+      setRange(prev => (prev.start === start && prev.end === end) ? prev : { start, end })
+    }
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(compute) }
+    // Deferred rather than called inline: measuring synchronously here would set
+    // state during the effect and cascade an extra render. The initial 60-row
+    // window covers the first frame until this lands.
+    frame = requestAnimationFrame(compute)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [totalRows, enabled])
+
+  // Derived rather than stored when disabled, so the effect never has to write
+  // state just to represent "render everything".
+  if (!enabled) return { anchorRef, start: 0, end: totalRows }
+  return { anchorRef, start: range.start, end: Math.min(range.end, totalRows) }
+}
+
 function FilterChevron({ open, active }) {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden
@@ -457,6 +513,10 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
       return (va - vb) * mul
     })
   }, [filtered, colSort, dynCols])
+
+  // Desktop table only; the mobile card list has variable heights.
+  const virtualOn = !isMobile && displayRows.length > VIRTUALIZE_ABOVE
+  const { anchorRef: tbodyRef, start: vStart, end: vEnd } = useWindowVirtual(displayRows.length, virtualOn)
 
   // ── CHANGE 6: cycleSort works for any col key (not just date) ─────────────
   const cycleSort = (colKey, dataType) => {
@@ -1080,8 +1140,13 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                         </th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {displayRows.map((c, i) => (
+                    <tbody ref={tbodyRef}>
+                      {virtualOn && vStart > 0 && (
+                        <tr aria-hidden style={{ height: vStart * ROW_HEIGHT }} />
+                      )}
+                      {(virtualOn ? displayRows.slice(vStart, vEnd) : displayRows).map((c, idx) => {
+                        const i = virtualOn ? vStart + idx : idx
+                        return (
                         <tr key={i} className="contact-row" data-selected={selected === i || undefined}
                           onClick={() => { setSelected(selected === i ? null : i); setEditing(false); setEditData(null) }}>
                           <td style={{ ...td, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px' }}>{c.full_name || '—'}</td>
@@ -1101,7 +1166,11 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                               : <span title="No notes" style={{ color: 'var(--border-strong)' }}>○</span>}
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
+                      {virtualOn && vEnd < displayRows.length && (
+                        <tr aria-hidden style={{ height: (displayRows.length - vEnd) * ROW_HEIGHT }} />
+                      )}
                     </tbody>
                   </table>
                 </div>
