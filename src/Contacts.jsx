@@ -455,7 +455,15 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         setOpenFilterCol(null); setFilterMenuPos(null); setOptionQuery('')
       }
     }
-    const closeFilter = () => { setOpenFilterCol(null); setFilterMenuPos(null); setOptionQuery('') }
+    // Registered in capture phase so page and table scrolls dismiss the popover
+    // — it is fixed-positioned and would otherwise detach from its header cell.
+    // That also catches scrolls *inside* the popover, which must not close it:
+    // on a column with many values, scrolling the list is the whole point.
+    const closeFilter = (e) => {
+      const t = e?.target
+      if (t && typeof t.closest === 'function' && t.closest('[data-col-filter-portal]')) return
+      setOpenFilterCol(null); setFilterMenuPos(null); setOptionQuery('')
+    }
     document.addEventListener('mousedown', handler)
     window.addEventListener('scroll', closeFilter, true)
     window.addEventListener('resize', closeFilter)
@@ -596,7 +604,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     left: filterMenuPos ? `${filterMenuPos.left}px` : 0,
     minWidth: '200px',
     maxWidth: 'min(280px, calc(100vw - 24px))',
-    maxHeight: 'min(280px, 50vh)',
+    maxHeight: 'min(380px, 60vh)',
     overflowY: 'auto',
     background: 'var(--surface)',
     borderRadius: '10px',
@@ -632,7 +640,12 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     return (
       <>
         {options.length > OPTION_RENDER_CAP && (
-          <div style={{ padding: '8px 14px 4px' }}>
+          <div style={{
+            position: 'sticky', top: 0, zIndex: 1,
+            padding: '4px 14px 8px',
+            background: 'var(--surface)',
+            borderBottom: '1px solid var(--border)',
+          }}>
             <input
               className="input" type="search" value={optionQuery} autoFocus
               placeholder={`Search ${options.length.toLocaleString()} values…`}
