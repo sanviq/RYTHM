@@ -725,68 +725,75 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
   // ── Nav ────────────────────────────────────────────────────────────────────
   const nav = (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 16px', height: '56px', background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(10px)', borderBottom: '1px solid #e0e0e0', position: 'sticky', top: 0, zIndex: 100, width: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <span style={{ fontSize: '18px', fontWeight: '900', letterSpacing: '3px', color: '#4f46e5' }}>RYTHM</span>
+    <div className="app-header">
+      <span style={{ fontSize: 'var(--t-lg)', fontWeight: 800, letterSpacing: '2px', color: 'var(--accent)' }}>RYTHM</span>
 
-        <div ref={sheetDropRef} style={{ position: 'relative' }}>
-          <button onClick={() => { setSheetDropOpen(p => !p); setSettingsOpen(false) }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 10px', fontSize: '13px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '8px', background: sheetDropOpen ? '#ede9fe' : '#fff', color: sheetDropOpen ? '#4f46e5' : '#333', cursor: 'pointer', outline: 'none' }}>
-            {activeSheet.sheet_name}
-            <svg width="10" height="6" viewBox="0 0 10 6" fill="none"><path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </button>
-          {sheetDropOpen && (
-            <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '200px', overflow: 'hidden', zIndex: 200 }}>
-              {sheets.map(s => (
-                <button key={s.id} onClick={() => { onSwitchSheet(s); setSheetDropOpen(false) }}
-                  style={{ width: '100%', textAlign: 'left', padding: '10px 14px', fontSize: '13px', fontWeight: s.id === activeSheet.id ? '700' : '500', background: s.id === activeSheet.id ? '#f5f3ff' : '#fff', color: s.id === activeSheet.id ? '#4f46e5' : '#333', border: 'none', cursor: 'pointer', display: 'block', borderBottom: '1px solid #f5f5f5' }}>
-                  {s.sheet_name}{s.id === activeSheet.id && <span style={{ fontSize: '11px', color: '#a5b4fc', marginLeft: '8px' }}>Active</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <span style={{ fontSize: '11px', background: '#ede9fe', padding: '3px 10px', borderRadius: '20px', color: '#4f46e5', fontWeight: '600' }}>
-          {contacts.length.toLocaleString()}
-        </span>
-
-        <button onClick={handleRefresh} title="Refresh from Google Sheet"
-          style={{ fontSize: '12px', fontWeight: '600', color: cacheHit === 'cache' ? '#4f46e5' : cacheHit === 'live' ? '#16a34a' : '#aaa', background: 'none', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer' }}>
-          {cacheHit === 'cache' ? 'Cached' : cacheHit === 'live' ? 'Live · Refresh' : 'Refresh'}
+      <div ref={sheetDropRef} style={{ position: 'relative' }}>
+        <button
+          className="btn btn-secondary btn-sm"
+          aria-haspopup="menu" aria-expanded={sheetDropOpen}
+          onClick={() => { setSheetDropOpen(p => !p); setSettingsOpen(false) }}
+          style={sheetDropOpen ? { background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent-border)' } : undefined}>
+          {activeSheet.sheet_name}
+          <svg width="10" height="6" viewBox="0 0 10 6" fill="none" aria-hidden><path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
+        {sheetDropOpen && (
+          <div className="menu" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, minWidth: '220px', zIndex: 200 }}>
+            {sheets.map(s => (
+              <button key={s.id} role="menuitem" className="menu-item"
+                onClick={() => { onSwitchSheet(s); setSheetDropOpen(false) }}
+                style={s.id === activeSheet.id ? { background: 'var(--accent-soft)', color: 'var(--accent)', fontWeight: 700 } : undefined}>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.sheet_name}</span>
+                {s.id === activeSheet.id && <span className="badge badge-accent">Active</span>}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#4f46e5', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
-          {userName.charAt(0).toUpperCase()}
-        </div>
-        <span style={{ fontSize: '13px', color: '#333', fontWeight: '500', maxWidth: isMobile ? '70px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {isMobile ? userName.split(' ')[0] : userName}
-        </span>
-        <div ref={settingsRef} style={{ position: 'relative' }}>
-          <button onClick={() => { setSettingsOpen(p => !p); setSheetDropOpen(false) }}
-            style={{ padding: '5px 10px', fontSize: '12px', fontWeight: '600', border: '1px solid #ddd', borderRadius: '6px', background: settingsOpen ? '#ede9fe' : '#fff', color: settingsOpen ? '#4f46e5' : '#666', cursor: 'pointer', outline: 'none' }}>
-            Settings
-          </button>
-          {settingsOpen && (
-            <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, background: '#fff', borderRadius: '10px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)', border: '1px solid #e8e8e8', minWidth: '180px', overflow: 'hidden', zIndex: 200 }}>
-              {[
-                { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
-                { label: 'Re-map Columns', action: handleStartRemap },
-                { label: deleting ? 'Deleting...' : 'Delete This Sheet', action: handleDeleteSheet, danger: true },
-                { label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
-              ].map(({ label, action, danger }) => (
-                <button key={label} onClick={action}
-                  style={{ width: '100%', textAlign: 'left', padding: '11px 16px', fontSize: '13px', fontWeight: '500', background: '#fff', color: danger ? '#dc2626' : '#333', border: 'none', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', display: 'block' }}
-                  onMouseEnter={e => e.currentTarget.style.background = danger ? '#fef2f2' : '#f9f8ff'}
-                  onMouseLeave={e => e.currentTarget.style.background = '#fff'}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      <span className="badge badge-accent">{contacts.length.toLocaleString()}</span>
+
+      <button className="btn btn-ghost btn-sm" onClick={handleRefresh} title="Refresh from Google Sheet"
+        style={{ color: cacheHit === 'live' ? 'var(--success)' : cacheHit === 'cache' ? 'var(--accent)' : 'var(--text-subtle)' }}>
+        {cacheHit === 'cache' ? 'Cached' : cacheHit === 'live' ? 'Live · Refresh' : 'Refresh'}
+      </button>
+
+      <div style={{ flex: 1 }} />
+
+      <div style={{
+        width: '28px', height: '28px', flexShrink: 0,
+        display: 'grid', placeItems: 'center',
+        borderRadius: 'var(--r-full)',
+        background: 'var(--accent)', color: 'var(--text-inverse)',
+        fontSize: 'var(--t-sm)', fontWeight: 700,
+      }}>
+        {userName.charAt(0).toUpperCase()}
+      </div>
+      <span style={{ fontSize: 'var(--t-base)', color: 'var(--text-muted)', maxWidth: isMobile ? '70px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {isMobile ? userName.split(' ')[0] : userName}
+      </span>
+
+      <div ref={settingsRef} style={{ position: 'relative' }}>
+        <button className="btn btn-secondary btn-sm"
+          aria-haspopup="menu" aria-expanded={settingsOpen}
+          onClick={() => { setSettingsOpen(p => !p); setSheetDropOpen(false) }}
+          style={settingsOpen ? { background: 'var(--accent-soft)', color: 'var(--accent)', borderColor: 'var(--accent-border)' } : undefined}>
+          Settings
+        </button>
+        {settingsOpen && (
+          <div className="menu" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '200px', zIndex: 200 }}>
+            {[
+              { label: 'Add New Sheet', action: () => { setSettingsOpen(false); onAddSheet() } },
+              { label: 'Re-map Columns', action: handleStartRemap },
+              { label: deleting ? 'Deleting…' : 'Delete This Sheet', action: handleDeleteSheet, danger: true },
+              { label: 'Sign Out', action: () => supabase.auth.signOut(), danger: true },
+            ].map(({ label, action, danger }) => (
+              <button key={label} role="menuitem" className="menu-item" data-danger={danger || undefined} onClick={action}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -825,16 +832,15 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
+      {/* Row hover/selection and card hover now come from theme.css. The old
+          rules here hardcoded light-mode hex with !important, which outranked
+          the tokens and left dark mode with white-on-white rows. */}
       <style>{`
-        .contact-row:hover { background: #f9f8ff !important; }
-        .contact-row.active { background: #ede9fe !important; }
-        .contact-card:hover { border-color: #a5b4fc !important; }
-        * { box-sizing: border-box; }
         @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
       `}</style>
 
-      <div style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif', minHeight: '100vh', background: 'linear-gradient(135deg, #ece9f7 0%, #e8f0fe 100%)', width: '100%', overflowX: 'hidden' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', width: '100%', overflowX: 'hidden' }}>
         {nav}
 
         {sheetError && (
@@ -980,9 +986,9 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
 
               <div style={{ background: '#fff', borderRadius: '14px', boxShadow: '0 2px 12px rgba(79,70,229,0.08)', overflow: 'visible' }}>
                 <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
+                  <table className="data-table" style={{ tableLayout: 'auto' }}>
                     <thead>
-                      <tr style={{ background: '#faf9ff', borderBottom: '2px solid #ede9fe' }}>
+                      <tr>
                         <th style={th}>Name</th>
                         {dynCols.map(col => {
                           const hasFilter = (columnFilters[col.key] || []).length > 0
@@ -1018,21 +1024,24 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                     </thead>
                     <tbody>
                       {displayRows.map((c, i) => (
-                        <tr key={i} className={`contact-row${selected === i ? ' active' : ''}`}
-                          style={{ borderBottom: '1px solid #f5f5f5', cursor: 'pointer', background: 'transparent' }}
+                        <tr key={i} className="contact-row" data-selected={selected === i || undefined}
                           onClick={() => { setSelected(selected === i ? null : i); setEditing(false); setEditData(null) }}>
-                          <td style={{ ...td, fontWeight: '600', color: '#4f46e5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline', textDecorationColor: '#c7d2fe', maxWidth: '140px' }}>{c.full_name || '—'}</td>
+                          <td style={{ ...td, fontWeight: 600, color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '180px' }}>{c.full_name || '—'}</td>
                           {dynCols.map(col => {
                             const val = getCellValue(c, col)
                             return (
-                              <td key={col.key} style={{ ...td, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '110px' }}>
+                              <td key={col.key} style={{ ...td, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>
                                 {BADGE_KEYS.has(col.key) && val
-                                  ? <span style={{ padding: '2px 7px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', display: 'inline-block', ...statusStyle(val) }}>{val}</span>
-                                  : <span style={{ color: '#555', fontSize: '12px' }}>{val || '—'}</span>}
+                                  ? <span className="badge" style={statusStyle(val)}>{val}</span>
+                                  : <span style={{ color: val ? 'var(--text-muted)' : 'var(--text-subtle)' }}>{val || '—'}</span>}
                               </td>
                             )
                           })}
-                          <td style={{ ...td, textAlign: 'center', fontSize: '14px' }}>{c.notes ? <span style={{ color: '#4f46e5' }}>●</span> : <span style={{ color: '#ddd' }}>○</span>}</td>
+                          <td style={{ ...td, textAlign: 'center' }}>
+                            {c.notes
+                              ? <span title="Has notes" style={{ color: 'var(--accent)' }}>●</span>
+                              : <span title="No notes" style={{ color: 'var(--border-strong)' }}>○</span>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1066,5 +1075,8 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
   )
 }
 
-const th = { padding: '9px 10px', textAlign: 'left', fontSize: '10px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.4px', overflow: 'visible', whiteSpace: 'nowrap' }
-const td = { padding: '9px 10px', fontSize: '12px' }
+// Padding, type and colour now come from .data-table in theme.css. These keep
+// only what the class deliberately doesn't set: th must not clip, so the
+// filter popover can escape the cell.
+const th = { overflow: 'visible' }
+const td = {}
