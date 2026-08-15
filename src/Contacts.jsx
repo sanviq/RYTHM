@@ -255,10 +255,17 @@ function useWindowVirtual(totalRows, enabled, cssVar, fallback) {
     // state during the effect and cascade an extra render. The initial 60-row
     // window covers the first frame until this lands.
     frame = requestAnimationFrame(compute)
-    window.addEventListener('scroll', onScroll, { passive: true })
+    // Capture phase on document, not a 'scroll' listener on window. The desktop
+    // table scrolls inside an overflow-y:auto pane, and scroll events do not
+    // bubble from an element to window — so a window listener never fired and
+    // the window stayed frozen at the rows rendered on mount. Capturing at the
+    // document catches scrolling from any container, including the page itself.
+    // The measurement above needs no change: getBoundingClientRect is
+    // viewport-relative, so it already tracks whichever ancestor scrolls.
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true })
     window.addEventListener('resize', onScroll)
     return () => {
-      window.removeEventListener('scroll', onScroll)
+      document.removeEventListener('scroll', onScroll, { capture: true })
       window.removeEventListener('resize', onScroll)
       if (frame) cancelAnimationFrame(frame)
     }
@@ -1098,11 +1105,14 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
               </div>
             )}
 
-            <div style={{ padding: '0 12px 100px' }}>
-              {/* Spacers reserve the height of the rows outside the window, so the
+            {/* The anchor must sit above the leading spacer: the arithmetic assumes
+                its top stays put while the spacer grows. On the inner list it
+                would move with the window and always measure zero scroll. */}
+            <div ref={cardsRef} style={{ padding: '0 12px 100px' }}>
+              {/* Spacers reserve the height of the cards outside the window, so the
                   scrollbar covers the whole list and any position is reachable. */}
               {mobileOn && mStart > 0 && <div aria-hidden style={{ height: mStart * cardH }} />}
-              <div ref={cardsRef}>
+              <div>
                 {(mobileOn ? displayRows.slice(mStart, mEnd) : displayRows).map((c, idx) => {
                   const i = mobileOn ? mStart + idx : idx
                   return (
