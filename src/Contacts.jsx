@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './logic/supabase'
 import { fetchContacts, updateContact, fetchHeaders } from './logic/sheets'
@@ -213,21 +213,21 @@ function uniqueValuesForColumn(contacts, col) {
 // the existing page scroll and the sticky header keep working as before.
 // Read from CSS so --row-h is the single source of truth; restyling row padding
 // no longer silently desyncs the virtualizer's offset-to-index arithmetic.
-const ROW_HEIGHT_FALLBACK = 44
-function readRowHeight() {
-  if (typeof window === 'undefined') return ROW_HEIGHT_FALLBACK
-  const raw = getComputedStyle(document.documentElement).getPropertyValue('--row-h')
+function readCssPx(varName, fallback) {
+  if (typeof window === 'undefined') return fallback
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(varName)
   const n = parseFloat(raw)
-  return Number.isFinite(n) && n > 0 ? n : ROW_HEIGHT_FALLBACK
+  return Number.isFinite(n) && n > 0 ? n : fallback
 }
+const ROW_HEIGHT_FALLBACK = 44
 const OVERSCAN = 8         // rows kept beyond each edge, to hide fast scrolling
 const VIRTUALIZE_ABOVE = 100
 const OPTION_RENDER_CAP = 200   // filter-popover options rendered at once
 
-function useWindowVirtual(totalRows, enabled) {
+function useWindowVirtual(totalRows, enabled, cssVar, fallback) {
   const anchorRef = useRef(null)
-  // Measured once on mount rather than hardcoded, so --row-h stays authoritative.
-  const [rowH] = useState(readRowHeight)
+  // Measured once on mount rather than hardcoded, so the CSS var stays authoritative.
+  const [rowH] = useState(() => readCssPx(cssVar, fallback))
   // Start narrow when virtualizing, or the very first paint would mount every
   // row before the effect below has a chance to shrink the window.
   const [range, setRange] = useState(() => ({
@@ -270,46 +270,18 @@ function useWindowVirtual(totalRows, enabled) {
   return { anchorRef, rowH, start: range.start, end: Math.min(range.end, totalRows) }
 }
 
-// The mobile cards have variable heights, so the fixed-height windowing used by
-// the table doesn't apply. Render a page at a time and extend as the user nears
-// the bottom — same effect on the initial paint, no height arithmetic.
-const MOBILE_PAGE = 40
+// The mobile card list uses the same windowing as the table. It used to render a
+// page at a time and extend near the bottom, which meant reaching the end of a
+// 15k list took hundreds of separate scroll-to-bottom events — the list looked
+// like it had simply stopped loading. Cards are pinned to a fixed pitch in CSS
+// (--card-pitch) so the same offset-to-index arithmetic applies, and the whole
+// list is reachable by dragging the scrollbar.
+const MOBILE_VIRTUALIZE_ABOVE = 40
+const CARD_PITCH_FALLBACK = 111
 
-function useIncremental(totalRows, enabled) {
-  // Keeps the row count it was built for, so a change in the filtered list is
-  // detectable during render — resetting via an effect would set state
-  // synchronously and cascade an extra render.
-  const [state, setState] = useState(() => ({ total: totalRows, count: enabled ? Math.min(totalRows, MOBILE_PAGE) : totalRows }))
-  const count = state.total === totalRows ? state.count : Math.min(totalRows, MOBILE_PAGE)
-
-  useEffect(() => {
-    if (!enabled) return
-    let frame = 0
-    const check = () => {
-      frame = 0
-      const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 600
-      if (!nearBottom) return
-      // Updated inline rather than through a helper closed over totalRows:
-      // as a dependency the helper was correct only because totalRows happened
-      // to be in this array too, which is a stale-closure bug waiting to happen.
-      setState(prev => {
-        const base = prev.total === totalRows ? prev.count : Math.min(totalRows, MOBILE_PAGE)
-        return { total: totalRows, count: base >= totalRows ? base : Math.min(totalRows, base + MOBILE_PAGE) }
-      })
-    }
-    const onScroll = () => { if (!frame) frame = requestAnimationFrame(check) }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    window.addEventListener('resize', onScroll)
-    return () => {
-      window.removeEventListener('scroll', onScroll)
-      window.removeEventListener('resize', onScroll)
-      if (frame) cancelAnimationFrame(frame)
-    }
-  }, [totalRows, enabled])
-
-
-  return enabled ? Math.min(count, totalRows) : totalRows
-}
+// Height on the <td> as well as the <tr>: the row box takes the taller of the
+// two, and only the cell's height is guaranteed to be honoured.
+const spacerCell = (h) => ({ height: h, padding: 0, border: 0 })
 
 function FilterChevron({ open, active }) {
   return (
@@ -389,7 +361,36 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     )
   }, [baseCols, contacts])
 
+  // Declared above the effect that calls it, and takes its sheet explicitly so
+  // it closes over nothing but stable setters — hence useCallback([]) and a
+  // stable identity, which lets the effect list it as a dependency without
+  // re-running. Previously it was declared below its caller and relied on
+  // effects running after render to avoid a temporal-dead-zone error.
+  const loadContacts = useCallback(async (sheet) => {
+    const mapping = normalizeColumnMapping(sheet.column_mapping)
+    setLoading(true)
+    setSheetError(null)
+    const accessToken = await getFreshToken()
+    if (!accessToken) { setTokenError(true); setLoading(false); setCacheHit(null); return }
+
+    try {
+      const data = await fetchContacts(sheet.sheet_url, sheet.tab_name, accessToken, mapping)
+      setContacts(data)
+      await saveToCache(sheet.id, data)
+      setCacheHit('live')
+    } catch (e) {
+      setSheetError(e?.message || 'Could not load your Google Sheet.')
+      setContacts([])
+      setCacheHit(null)
+    }
+    setLoading(false)
+  }, [])
+
   // ── Load contacts (cache → fetch) ──────────────────────────────────────────
+  // App keys this component on activeSheet.id, so switching sheets already
+  // remounts and resets everything below. The resets still matter for a re-map,
+  // which replaces the sheet object without changing its id: the columns change,
+  // so filters and sorts referring to the old ones must be cleared.
   useEffect(() => {
     setSelected(null)
     setEditing(false)
@@ -417,7 +418,7 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
         setLoading(false)
         setCacheHit('cache')
       } else {
-        loadContacts()
+        loadContacts(activeSheet)
       }
     })
 
@@ -427,27 +428,11 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
       cancelled = true
       window.removeEventListener('resize', handleResize)
     }
-  }, [activeSheet.id])
+    // Deliberately not the whole activeSheet object: App replaces it at the same
+    // id whenever the cache updates, which would reload in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSheet.id, activeSheet.column_mapping, loadContacts])
 
-  const loadContacts = async (sheet = activeSheet) => {
-    const mapping = normalizeColumnMapping(sheet.column_mapping)
-    setLoading(true)
-    setSheetError(null)
-    const accessToken = await getFreshToken()
-    if (!accessToken) { setTokenError(true); setLoading(false); setCacheHit(null); return }
-
-    try {
-      const data = await fetchContacts(sheet.sheet_url, sheet.tab_name, accessToken, mapping)
-      setContacts(data)
-      await saveToCache(sheet.id, data)
-      setCacheHit('live')
-    } catch (e) {
-      setSheetError(e?.message || 'Could not load your Google Sheet.')
-      setContacts([])
-      setCacheHit(null)
-    }
-    setLoading(false)
-  }
 
   const handleRefresh = async () => {
     setCacheHit(null)
@@ -589,11 +574,13 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
     })
   }, [filtered, colSort, dynCols])
 
-  // Desktop table only; the mobile card list has variable heights.
   const virtualOn = !isMobile && displayRows.length > VIRTUALIZE_ABOVE
-  const { anchorRef: tbodyRef, rowH: vRowH, start: vStart, end: vEnd } = useWindowVirtual(displayRows.length, virtualOn)
-  const mobileOn = isMobile && displayRows.length > MOBILE_PAGE
-  const mobileCount = useIncremental(displayRows.length, mobileOn)
+  const { anchorRef: tbodyRef, rowH: vRowH, start: vStart, end: vEnd } =
+    useWindowVirtual(displayRows.length, virtualOn, '--row-h', ROW_HEIGHT_FALLBACK)
+  const spacerCols = dynCols.length + 2   // leading Name column + trailing Notes column
+  const mobileOn = isMobile && displayRows.length > MOBILE_VIRTUALIZE_ABOVE
+  const { anchorRef: cardsRef, rowH: cardH, start: mStart, end: mEnd } =
+    useWindowVirtual(displayRows.length, mobileOn, '--card-pitch', CARD_PITCH_FALLBACK)
 
   // ── CHANGE 6: cycleSort works for any col key (not just date) ─────────────
   const cycleSort = (colKey, dataType) => {
@@ -1112,26 +1099,39 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
             )}
 
             <div style={{ padding: '0 12px 100px' }}>
-              {(mobileOn ? displayRows.slice(0, mobileCount) : displayRows).map((c, i) => (
-                <div key={i} className="contact-card" onClick={() => { setSelected(i); setEditing(false); setEditData(null) }}
-                  style={{ background: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', padding: '14px 16px', marginBottom: '10px', cursor: 'pointer', transition: 'border-color 0.15s' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                    <div style={{ width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', flexShrink: 0, ...avatarColor(c.status) }}>
-                      {(c.full_name || '?').charAt(0).toUpperCase()}
+              {/* Spacers reserve the height of the rows outside the window, so the
+                  scrollbar covers the whole list and any position is reachable. */}
+              {mobileOn && mStart > 0 && <div aria-hidden style={{ height: mStart * cardH }} />}
+              <div ref={cardsRef}>
+                {(mobileOn ? displayRows.slice(mStart, mEnd) : displayRows).map((c, idx) => {
+                  const i = mobileOn ? mStart + idx : idx
+                  return (
+                  <div key={i} className="contact-card" onClick={() => { setSelected(i); setEditing(false); setEditData(null) }}
+                    style={{ background: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--border)', padding: '14px 16px', cursor: 'pointer', transition: 'border-color 0.15s' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: '700', flexShrink: 0, ...avatarColor(c.status) }}>
+                        {(c.full_name || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.first_name || c.full_name || '—'}</p>
+                        <p style={{ fontSize: '13px', color: 'var(--text-subtle)', margin: '2px 0 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.organization || '—'}</p>
+                      </div>
                     </div>
-                    <div style={{ minWidth: 0 }}>
-                      <p style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.first_name || c.full_name || '—'}</p>
-                      <p style={{ fontSize: '13px', color: 'var(--text-subtle)', margin: '2px 0 0' }}>{c.organization || '—'}</p>
+                    {/* nowrap is load-bearing: a wrapped badge row would make the card
+                        taller than --card-pitch and desync the virtualizer. */}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap', ...statusStyle(c.status) }}>{c.status || '—'}</span>
+                      <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', whiteSpace: 'nowrap', ...statusStyle(c.response) }}>{c.response || '—'}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-subtle)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>{c.mobile_no || ''}</span>
+                      <span style={{ fontSize: '15px' }}>{c.notes ? <span style={{ color: 'var(--accent)' }}>●</span> : <span style={{ color: 'var(--border-strong)' }}>○</span>}</span>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', ...statusStyle(c.status) }}>{c.status || '—'}</span>
-                    <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', ...statusStyle(c.response) }}>{c.response || '—'}</span>
-                    <span style={{ fontSize: '12px', color: 'var(--text-subtle)', marginLeft: 'auto' }}>{c.mobile_no || ''}</span>
-                    <span style={{ fontSize: '15px' }}>{c.notes ? <span style={{ color: 'var(--accent)' }}>●</span> : <span style={{ color: 'var(--border-strong)' }}>○</span>}</span>
-                  </div>
-                </div>
-              ))}
+                  )
+                })}
+              </div>
+              {mobileOn && mEnd < displayRows.length && (
+                <div aria-hidden style={{ height: (displayRows.length - mEnd) * cardH }} />
+              )}
             </div>
 
             {selected !== null && displayRows[selected] && (
@@ -1258,8 +1258,13 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                       </tr>
                     </thead>
                     <tbody ref={tbodyRef}>
+                      {/* The spacer needs a real cell: a <tr> with no cells has no
+                          row box to apply the height to, and collapses to zero —
+                          which shrinks the page so the rest is unreachable. */}
                       {virtualOn && vStart > 0 && (
-                        <tr aria-hidden style={{ height: vStart * vRowH }} />
+                        <tr aria-hidden style={{ height: vStart * vRowH }}>
+                          <td colSpan={spacerCols} style={spacerCell(vStart * vRowH)} />
+                        </tr>
                       )}
                       {(virtualOn ? displayRows.slice(vStart, vEnd) : displayRows).map((c, idx) => {
                         const i = virtualOn ? vStart + idx : idx
@@ -1286,7 +1291,9 @@ export default function Contacts({ activeSheet, sheets, session, onSwitchSheet, 
                         )
                       })}
                       {virtualOn && vEnd < displayRows.length && (
-                        <tr aria-hidden style={{ height: (displayRows.length - vEnd) * vRowH }} />
+                        <tr aria-hidden style={{ height: (displayRows.length - vEnd) * vRowH }}>
+                          <td colSpan={spacerCols} style={spacerCell((displayRows.length - vEnd) * vRowH)} />
+                        </tr>
                       )}
                     </tbody>
                   </table>

@@ -60,6 +60,10 @@
   --ring: 0 0 0 3px rgba(79, 70, 229, .18);
   --header-h: 60px;
   --row-h: 44px;   /* read at runtime by the table virtualizer */
+  /* Mobile card list: pitch = card box + the gap below it. Read at runtime by
+     the card virtualizer, so both must stay in step. */
+  --card-gap: 10px;
+  --card-pitch: 111px;
 
   /* Makes the browser theme native form controls; without it inputs keep a
      white default background and dark-mode text turns invisible on top. */
@@ -258,6 +262,12 @@ input::placeholder, textarea::placeholder { color: var(--text-subtle); }
   border-radius: var(--r-lg);
   cursor: pointer;
   transition: border-color .15s, box-shadow .15s;
+  /* Fixed pitch is load-bearing: the card virtualizer converts scroll offset to
+     an index by dividing by --card-pitch, so a taller card misplaces the window. */
+  height: calc(var(--card-pitch) - var(--card-gap));
+  margin-bottom: var(--card-gap);
+  box-sizing: border-box;
+  overflow: hidden;
 }
 .contact-card:hover { border-color: var(--accent-border); box-shadow: var(--shadow-sm); }
 
