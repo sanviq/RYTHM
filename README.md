@@ -1,5 +1,7 @@
 # Rythm
 
+**Live: [rythm-ca0.pages.dev](https://rythm-ca0.pages.dev)**
+
 A fast, minimal CRM built on top of Google Sheets. No data migration, no complex setup — just connect your existing sheet and start managing contacts.
 
 ## What it does
