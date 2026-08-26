@@ -23,11 +23,30 @@ jobs:
           SUPABASE_URL: https://oqcbxcfdytpqmbywsoap.supabase.co
           SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xY2J4Y2ZkeXRwcW1ieXdzb2FwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2MjMxMzUsImV4cCI6MjA5MDE5OTEzNX0.X0VWRHMbP0BXabYs_PNHMDuacXdwLruTat2jAtdU6RA
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          # Deliberately not `set -e`: a transport-level curl failure (DNS, TLS,
+          # timeout) is the most interesting outcome here, and aborting on it
+          # would skip the diagnosis below and report a bare exit code instead.
           code=$(curl -s -o /tmp/out -w '%{http_code}' --max-time 30 \
             -H "apikey: $SUPABASE_ANON_KEY" \
             -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
             "$SUPABASE_URL/rest/v1/user_sheets?select=id&limit=1")
+          curl_status=$?
+
+          if [ "$curl_status" -ne 0 ]; then
+            echo "curl could not complete the request (exit $curl_status)."
+            if [ "$curl_status" -eq 6 ]; then
+              echo
+              echo "Exit 6 is DNS: $SUPABASE_URL has no address record."
+              echo "A *paused* project still resolves and answers with an error,"
+              echo "so no record at all means the project was deleted or restored"
+              echo "under a new ref. Check the Supabase dashboard — if the ref"
+              echo "changed, update SUPABASE_URL/SUPABASE_ANON_KEY here and the"
+              echo "VITE_* variables in Cloudflare Pages, then redeploy."
+            fi
+            exit 1
+          fi
+
           echo "HTTP $code"
           # RLS means an unauthenticated caller correctly gets an empty array;
           # the point is that the query reached the database at all.
