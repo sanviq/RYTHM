@@ -14,6 +14,9 @@ on:
     - cron: '0 6 */3 * *'   # 06:00 UTC, every third day
   workflow_dispatch:         # and on demand, from the Actions tab
 
+permissions:
+  contents: write   # for the heartbeat push below
+
 jobs:
   ping:
     runs-on: ubuntu-latest
@@ -56,3 +59,22 @@ jobs:
             exit 1
           fi
           echo "Project is awake."
+
+      - uses: actions/checkout@v4
+
+      - name: Keep the schedule itself alive
+        # GitHub disables scheduled workflows after 60 days of repository
+        # inactivity. That would silently stop this job, letting Supabase idle
+        # out — the exact failure this workflow exists to prevent, and a plausible
+        # cause of the 2026-08 pause. A heartbeat commit counts as activity.
+        #
+        # It lands on a throwaway `keepalive` branch, force-pushed each run, so
+        # main's history stays clean and the branch never accumulates.
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B keepalive
+          git commit --allow-empty -m "heartbeat $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push --force origin keepalive
+          echo "Heartbeat pushed; scheduled workflows stay enabled."
