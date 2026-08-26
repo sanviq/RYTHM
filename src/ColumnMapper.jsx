@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import ColumnTypeSelector, { COLUMN_TYPES } from './ColumnTypeSelector'
+import { useState } from 'react'
+import ColumnTypeSelector from './ColumnTypeSelector'
+import { COLUMN_TYPES } from './columnTypes'
 import './columnTypes.css'
 
 const FIXED_FIELDS = [
@@ -25,39 +26,41 @@ function migrateType(raw) {
 }
 
 export default function ColumnMapper({ headers, initialMapping, onConfirm, onBack, saving }) {
-  const [fixedMapping, setFixedMapping] = useState({})
-  const [fieldTypes, setFieldTypes]     = useState({})
-  const [extraFields, setExtraFields]   = useState([])
-
-  useEffect(() => {
+  // Both call sites render ColumnMapper conditionally, so it remounts whenever
+  // mapping starts — these initialisers deliberately read the props once, at
+  // mount, and later prop changes do not re-derive state. Lazy useState rather
+  // than a mount effect: same timing, but without the extra render pass a
+  // setState-in-effect would cause.
+  const [fixedMapping, setFixedMapping] = useState(() => {
     const fixed = {}
     FIXED_FIELDS.forEach(f => {
       fixed[f.key] = initialMapping[f.key] !== undefined ? initialMapping[f.key] : null
     })
-    setFixedMapping(fixed)
+    return fixed
+  })
 
+  const [fieldTypes, setFieldTypes] = useState(() => {
     const ft = {}
     FIXED_FIELDS.forEach(field => {
       ft[field.key] = migrateType(initialMapping.fieldTypes?.[field.key])
     })
-    setFieldTypes(ft)
+    return ft
+  })
 
-    const usedIndices = new Set(Object.values(fixed).filter(v => v !== null))
-
+  const [extraFields, setExtraFields] = useState(() => {
     if (initialMapping.extra && Array.isArray(initialMapping.extra)) {
-      setExtraFields(
-        initialMapping.extra.map(e => ({
-          ...e,
-          dataType: migrateType(e.dataType),
-        }))
-      )
-    } else {
-      const suggestions = headers
-        .map((h, i) => ({ label: h, colIndex: i }))
-        .filter(({ colIndex }) => !usedIndices.has(colIndex))
-      setExtraFields(suggestions.map(s => ({ label: s.label, colIndex: s.colIndex, dataType: 'text' })))
+      return initialMapping.extra.map(e => ({
+        ...e,
+        dataType: migrateType(e.dataType),
+      }))
     }
-  }, [])
+    // Anything the fixed fields did not claim is offered as an extra column.
+    const usedIndices = new Set(Object.values(fixedMapping).filter(v => v !== null))
+    return headers
+      .map((h, i) => ({ label: h, colIndex: i }))
+      .filter(({ colIndex }) => !usedIndices.has(colIndex))
+      .map(s => ({ label: s.label, colIndex: s.colIndex, dataType: 'text' }))
+  })
 
   const setFixed = (key, value) => {
     setFixedMapping(prev => ({ ...prev, [key]: value === '' ? null : Number(value) }))

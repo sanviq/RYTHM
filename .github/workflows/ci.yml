@@ -1,0 +1,58 @@
+name: CI
+
+# Rythm had no build or lint check on pull requests, so a change that broke the
+# build could merge and reach Cloudflare Pages unchallenged.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npx eslint src --max-warnings=0
+
+      - name: Build
+        # Placeholders, not real credentials: this job only proves the bundle
+        # compiles. supabase.js throws at module scope when these are unset,
+        # which is exactly the condition the size guard below checks for.
+        env:
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder
+        run: npx vite build
+
+      - name: Guard against a dead-code-eliminated bundle
+        # If VITE_SUPABASE_URL is missing, Vite inlines it as `undefined`, the
+        # throw in supabase.js constant-folds to unconditional, and everything
+        # after it is eliminated — yielding a ~282KB bundle that builds green
+        # and renders a blank page. A healthy bundle is ~434KB. Fail under 400KB
+        # so that collapse can never merge silently.
+        run: |
+          set -euo pipefail
+          bundle=$(find dist/assets -name 'index-*.js' | head -1)
+          if [ -z "$bundle" ]; then
+            echo "No dist/assets/index-*.js produced — the build did not emit an entry bundle."
+            exit 1
+          fi
+          size=$(wc -c < "$bundle")
+          echo "$bundle is $size bytes"
+          if [ "$size" -lt 400000 ]; then
+            echo "Bundle is suspiciously small ($size < 400000)."
+            echo "This is the signature of the app being dead-code-eliminated"
+            echo "because the VITE_SUPABASE_* vars were missing at build time."
+            exit 1
+          fi
+          echo "Bundle size looks healthy."

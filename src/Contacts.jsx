@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './logic/supabase'
 import { fetchContacts, updateContact, fetchHeaders } from './logic/sheets'
-import { getFreshToken } from './App'
+import { getFreshToken } from './logic/auth'
 import ColumnMapper from './ColumnMapper'
 
 // ─── IndexedDB Cache ──────────────────────────────────────────────────────────
