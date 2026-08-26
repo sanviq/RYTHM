@@ -4,18 +4,6 @@ import Login from './Login'
 import SheetSetup from './SheetSetup'
 import Contacts from './Contacts'
 
-// Call this anywhere you need a fresh Google access token
-export async function getFreshToken() {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (session?.provider_token) return session.provider_token
-
-  // Try refreshing the session
-  const { data: { session: refreshed } } = await supabase.auth.refreshSession()
-  if (refreshed?.provider_token) return refreshed.provider_token
-
-  return null
-}
-
 // OAuth failures come back on the callback URL, in the query string or the hash
 // depending on the flow. Without reading them a failed sign-in just renders the
 // login screen again, which looks like an unexplained redirect loop.
@@ -40,29 +28,17 @@ export default function App() {
   const [activeSheet, setActiveSheet] = useState(null)
   const [loading, setLoading] = useState(true)
   const [addingSheet, setAddingSheet] = useState(false)
-  const [authError, setAuthError] = useState(() => readAuthError())
+  // Read once at mount; nothing sets it afterwards, so there is no setter.
+  const [authError] = useState(() => readAuthError())
 
   // Strip the error off the URL so a refresh doesn't resurrect a stale message.
   useEffect(() => {
     if (authError) window.history.replaceState({}, '', window.location.pathname)
   }, [authError])
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      if (session) loadSheets(session)
-      else setLoading(false)
-    })
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-      if (session) loadSheets(session)
-      else { setLoading(false); setSheets([]); setActiveSheet(null) }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [])
-
+  // Declared above the effect that calls it: the effect body only runs after
+  // render, so a later `const` happened to work, but reading a binding before
+  // its declaration is fragile and the compiler lint rejects it.
   const loadSheets = async (session) => {
     const { data } = await supabase
       .from('user_sheets')
@@ -80,6 +56,22 @@ export default function App() {
     }
     setLoading(false)
   }
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      if (session) loadSheets(session)
+      else setLoading(false)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+      if (session) loadSheets(session)
+      else { setLoading(false); setSheets([]); setActiveSheet(null) }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   const handleSheetSaved = (newSheet) => {
     setSheets(prev => [...prev, newSheet])
