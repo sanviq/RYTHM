@@ -2,8 +2,21 @@ name: Keep Supabase awake
 
 # Supabase pauses free-tier projects after roughly a week of no activity, and a
 # long-paused project is eventually deleted. Rythm is used in bursts, so it can
-# easily go quiet for that long — this issues one cheap authenticated query on a
+# easily go quiet for that long — this issues cheap authenticated queries on a
 # schedule so the project always counts as active.
+#
+# Cadence is load-bearing, and reaching the database is not on its own enough.
+# Supabase's own rule is "a few user requests to the database each day over the
+# previous week":
+#   https://supabase.com/docs/guides/platform/free-project-pausing
+# An every-third-day ping satisfies "before the 7-day window closes" but works
+# out to ~2 requests a week, which is well under that bar — every run returned
+# HTTP 200 and Supabase still queued the project for pausing on 2026-09-02.
+# So: twice a day, several requests each time. Do not thin this back out.
+#
+# The times are deliberately off the hour. GitHub queues scheduled workflows
+# behind everyone else's and drops them under load, and :00 is the most
+# contended slot of all; twice a day also means one skipped run costs nothing.
 #
 # The anon key is deliberately inline: it is already public in the deployed
 # JavaScript bundle and is only safe because row-level security constrains it.
@@ -11,8 +24,8 @@ name: Keep Supabase awake
 
 on:
   schedule:
-    - cron: '0 6 */3 * *'   # 06:00 UTC, every third day
-  workflow_dispatch:         # and on demand, from the Actions tab
+    - cron: '19 2,14 * * *'   # 02:19 and 14:19 UTC, every day
+  workflow_dispatch:          # and on demand, from the Actions tab
 
 permissions:
   contents: write   # for the heartbeat push below
@@ -30,34 +43,43 @@ jobs:
           # Deliberately not `set -e`: a transport-level curl failure (DNS, TLS,
           # timeout) is the most interesting outcome here, and aborting on it
           # would skip the diagnosis below and report a bare exit code instead.
-          code=$(curl -s -o /tmp/out -w '%{http_code}' --max-time 30 \
-            -H "apikey: $SUPABASE_ANON_KEY" \
-            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
-            "$SUPABASE_URL/rest/v1/user_sheets?select=id&limit=1")
-          curl_status=$?
 
-          if [ "$curl_status" -ne 0 ]; then
-            echo "curl could not complete the request (exit $curl_status)."
-            if [ "$curl_status" -eq 6 ]; then
-              echo
-              echo "Exit 6 is DNS: $SUPABASE_URL has no address record."
-              echo "A *paused* project still resolves and answers with an error,"
-              echo "so no record at all means the project was deleted or restored"
-              echo "under a new ref. Check the Supabase dashboard — if the ref"
-              echo "changed, update SUPABASE_URL/SUPABASE_ANON_KEY here and the"
-              echo "VITE_* variables in Cloudflare Pages, then redeploy."
+          # Three separate queries, spaced out, so the run registers as a handful
+          # of requests rather than a single blip. They are still trivially cheap
+          # — each returns at most one row.
+          for attempt in 1 2 3; do
+            [ "$attempt" -eq 1 ] || sleep 5
+
+            code=$(curl -s -o /tmp/out -w '%{http_code}' --max-time 30 \
+              -H "apikey: $SUPABASE_ANON_KEY" \
+              -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+              "$SUPABASE_URL/rest/v1/user_sheets?select=id&limit=1")
+            curl_status=$?
+
+            if [ "$curl_status" -ne 0 ]; then
+              echo "Query $attempt: curl could not complete the request (exit $curl_status)."
+              if [ "$curl_status" -eq 6 ]; then
+                echo
+                echo "Exit 6 is DNS: $SUPABASE_URL has no address record."
+                echo "A *paused* project still resolves and answers with an error,"
+                echo "so no record at all means the project was deleted or restored"
+                echo "under a new ref. Check the Supabase dashboard — if the ref"
+                echo "changed, update SUPABASE_URL/SUPABASE_ANON_KEY here and the"
+                echo "VITE_* variables in Cloudflare Pages, then redeploy."
+              fi
+              exit 1
             fi
-            exit 1
-          fi
 
-          echo "HTTP $code"
-          # RLS means an unauthenticated caller correctly gets an empty array;
-          # the point is that the query reached the database at all.
-          if [ "$code" != "200" ]; then
-            echo "Unexpected response — the project may be paused or the key rotated:"
-            cat /tmp/out
-            exit 1
-          fi
+            echo "Query $attempt: HTTP $code"
+            # RLS means an unauthenticated caller correctly gets an empty array;
+            # the point is that the query reached the database at all.
+            if [ "$code" != "200" ]; then
+              echo "Unexpected response — the project may be paused or the key rotated:"
+              cat /tmp/out
+              exit 1
+            fi
+          done
+
           echo "Project is awake."
 
       - uses: actions/checkout@v4
