@@ -39,3 +39,37 @@ create policy "Users update own sheets"
 create policy "Users delete own sheets"
   on public.user_sheets for delete
   using (auth.uid() = user_id);
+
+
+-- Keepalive target for .github/workflows/keep-supabase-awake.yml.
+--
+-- The workflow used to read user_sheets, which RLS correctly answers with an
+-- empty array for an unauthenticated caller. That reaches Postgres and so does
+-- count as activity, but it leaves no trace, so there is no way to confirm from
+-- the data that the pings are landing. This table is written instead: pinged_at
+-- is the last time the keepalive actually ran.
+--
+-- The shape bounds what a hostile caller can do with the public anon key. `id`
+-- is a boolean primary key constrained to true, so the table holds at most one
+-- row, and only select and update are granted — no insert, no delete. The worst
+-- available action is overwriting one timestamp that nothing depends on.
+create table if not exists public.keepalive (
+  id         boolean primary key default true check (id),
+  pinged_at  timestamptz not null default now()
+);
+
+insert into public.keepalive (id) values (true) on conflict (id) do nothing;
+
+alter table public.keepalive enable row level security;
+
+drop policy if exists "Anyone may read the keepalive row"  on public.keepalive;
+drop policy if exists "Anyone may touch the keepalive row" on public.keepalive;
+
+create policy "Anyone may read the keepalive row"
+  on public.keepalive for select
+  using (true);
+
+create policy "Anyone may touch the keepalive row"
+  on public.keepalive for update
+  using (true)
+  with check (true);

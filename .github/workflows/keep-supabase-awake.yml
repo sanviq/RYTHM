@@ -18,6 +18,17 @@ name: Keep Supabase awake
 # behind everyone else's and drops them under load, and :00 is the most
 # contended slot of all; twice a day also means one skipped run costs nothing.
 #
+# The ping writes to public.keepalive (see supabase/schema.sql) rather than
+# reading user_sheets. A read was fine as activity, but RLS answers an
+# unauthenticated reader with an empty array either way, so it left no evidence
+# in the data that the pings were landing. The write stamps pinged_at, which is
+# checkable from the dashboard, and PostgREST echoes the updated row back so the
+# job can assert it actually changed something.
+#
+# public.keepalive is deliberately shaped so the public anon key cannot do damage
+# with that write access: one row, enforced by a boolean primary key, with only
+# select and update granted. See the comment on the table for the reasoning.
+#
 # The anon key is deliberately inline: it is already public in the deployed
 # JavaScript bundle and is only safe because row-level security constrains it.
 # Never put the service_role key here.
@@ -51,9 +62,13 @@ jobs:
             [ "$attempt" -eq 1 ] || sleep 5
 
             code=$(curl -s -o /tmp/out -w '%{http_code}' --max-time 30 \
+              -X PATCH \
               -H "apikey: $SUPABASE_ANON_KEY" \
               -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
-              "$SUPABASE_URL/rest/v1/user_sheets?select=id&limit=1")
+              -H "Content-Type: application/json" \
+              -H "Prefer: return=representation" \
+              -d '{"pinged_at":"now()"}' \
+              "$SUPABASE_URL/rest/v1/keepalive?id=eq.true")
             curl_status=$?
 
             if [ "$curl_status" -ne 0 ]; then
@@ -70,19 +85,23 @@ jobs:
               exit 1
             fi
 
-            echo "Query $attempt: HTTP $code"
-            # RLS means an unauthenticated caller correctly gets an empty array;
-            # the point is that the query reached the database at all.
+            echo "Query $attempt: HTTP $code — $(cat /tmp/out)"
             if [ "$code" != "200" ]; then
               echo "Unexpected response — the project may be paused or the key rotated:"
               cat /tmp/out
+              exit 1
+            fi
+            # return=representation echoes the updated row, so an empty array
+            # means the row is gone and every future ping is a silent no-op.
+            if [ "$(cat /tmp/out)" = "[]" ]; then
+              echo "The keepalive row is missing. Re-run supabase/schema.sql."
               exit 1
             fi
           done
 
           echo "Project is awake."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Keep the schedule itself alive
         # GitHub disables scheduled workflows after 60 days of repository
